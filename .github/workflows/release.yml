@@ -1,0 +1,54 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: build mac_enclosure_color
+    runs-on: macos-latest
+    permissions:
+      contents: write  # required to upload release assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mac_enclosure_color/go.mod
+          cache-dependency-path: mac_enclosure_color/go.sum
+
+      - name: Build (arm64)
+        working-directory: mac_enclosure_color
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          go build -trimpath -ldflags='-s -w' -o ../osquery-extension.arm64.ext .
+
+      - name: Build (amd64)
+        working-directory: mac_enclosure_color
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: amd64
+        run: |
+          go build -trimpath -ldflags='-s -w' -o ../osquery-extension.amd64.ext .
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output osquery-extension.ext \
+            osquery-extension.arm64.ext \
+            osquery-extension.amd64.ext
+          file osquery-extension.ext
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" osquery-extension.ext --clobber

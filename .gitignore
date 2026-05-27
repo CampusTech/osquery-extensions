@@ -1,0 +1,13 @@
+# Built extension binaries
+*.ext
+*.ext.dSYM/
+
+# Go build artifacts
+/bin/
+/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

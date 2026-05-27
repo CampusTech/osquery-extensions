@@ -24,7 +24,11 @@ func TestResolveColor(t *testing.T) {
 		{"Mac Studio forced silver", "Mac14,13", "Mac Studio", 9, true, "Silver"},
 		{"Mac Pro forced silver", "MacPro7,1", "Mac Pro", 0, false, "Silver"},
 		{"Universal code 2 Space Gray", "MacBookPro16,1", "MacBook Pro", 2, true, "Space Gray"},
-		{"Universal code 11 Sky Blue", "Mac15,12", "MacBook Air", 11, true, "Sky Blue"},
+		{"MacBook Air code 11 Sky Blue", "Mac15,12", "MacBook Air", 11, true, "Sky Blue"},
+		{"Code 11 not MacBook Air is Unknown", "Mac16,5", "MacBook Pro", 11, true, "Unknown"},
+		{"Code 12 Indigo", "Mac17,1", "MacBook", 12, true, "Indigo"},
+		{"Code 13 Citrus", "Mac17,1", "MacBook", 13, true, "Citrus"},
+		{"Code 14 Blush", "Mac17,1", "MacBook", 14, true, "Blush"},
 		{"Unknown when no code and no model match", "Mac16,5", "MacBook Pro", 0, false, "Unknown"},
 		{"Unknown code returns Unknown", "Mac16,5", "MacBook Pro", 99, true, "Unknown"},
 	}

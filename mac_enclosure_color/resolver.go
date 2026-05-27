@@ -38,6 +38,8 @@ func resolveColor(productType, model string, code int, codeKnown bool) string {
 		return "Red"
 	case 9:
 		return "Space Black"
+	case 11:
+		return "Sky Blue"
 	case 12:
 		return "Indigo"
 	case 13:
@@ -60,8 +62,6 @@ func resolveColor(productType, model string, code int, codeKnown bool) string {
 		return "Orange"
 	case code == 8 && model == "MacBook Air":
 		return "Starlight"
-	case code == 11 && model == "MacBook Air":
-		return "Sky Blue"
 	}
 
 	return "Unknown"

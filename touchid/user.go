@@ -4,7 +4,7 @@ import (
 	"context"
 	"os/user"
 	"strconv"
-	"syscall"
+	"strings"
 
 	"github.com/osquery/osquery-go/plugin/table"
 )
@@ -29,18 +29,39 @@ func defaultUIDLookup(uid string) bool {
 	return err == nil
 }
 
-// consoleUIDFunc returns the uid of the user currently at the GUI console, or
-// "" if it can't be determined; injected for testability.
-type consoleUIDFunc func() string
+// localUsersFunc returns the uids of real local accounts; injected for
+// testability.
+type localUsersFunc func() []string
 
-// defaultConsoleUID reads the owner of /dev/console, which macOS assigns to the
-// user with the active GUI (loginwindow) session.
-func defaultConsoleUID() string {
-	var st syscall.Stat_t
-	if err := syscall.Stat("/dev/console", &st); err != nil {
-		return ""
+// minHumanUID is the conventional floor for real (non-system) macOS accounts.
+// System and service accounts use uids below 500; the first human account is
+// 501. We cap at 60000 to exclude transient/Setup Assistant accounts.
+const (
+	minHumanUID = 501
+	maxHumanUID = 60000
+)
+
+// defaultLocalUsers enumerates real local accounts via Directory Services,
+// returning their uids. Output of `dscl . -list /Users UniqueID` is two
+// columns: account name and uid.
+func defaultLocalUsers() []string {
+	out, err := defaultCmdRunner(-1, "/usr/bin/dscl", ".", "-list", "/Users", "UniqueID")
+	if err != nil {
+		return nil
 	}
-	return strconv.FormatUint(uint64(st.Uid), 10)
+	var uids []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n < minHumanUID || n > maxHumanUID {
+			continue
+		}
+		uids = append(uids, fields[1])
+	}
+	return uids
 }
 
 // generateUser builds touchid_user_config rows. Two bioutil data sources with
@@ -54,14 +75,14 @@ func defaultConsoleUID() string {
 //     only exists while the user is logged in. There is no admin form to read
 //     another user's config flags.
 //
-// Target uid selection: the query's `uid =` constraints if any, else the GUI
-// console user, else every user with enrolled templates from `-c -s`. For a
-// user whose config flags can't be read (e.g. logged out), the count is still
-// reported and the four flag columns are left empty rather than defaulted to 0
-// (which would misrepresent an enabled-but-offline user as disabled).
+// Target uid selection: the query's `uid =` constraints if any, else every
+// real local account. For a user whose config flags can't be read (e.g. logged
+// out), the count is still reported and the four flag columns are left empty
+// rather than defaulted to 0 (which would misrepresent an enabled-but-offline
+// user as disabled).
 //
 // Dependencies are injected so the function is unit-testable.
-func generateUser(uids []string, run cmdRunner, lookup uidLookup, console consoleUIDFunc) ([]map[string]string, error) {
+func generateUser(uids []string, run cmdRunner, lookup uidLookup, localUsers localUsersFunc) ([]map[string]string, error) {
 	// Counts for all enrolled users. `bioutil -c -s` requires root (the context
 	// fleetd/orbit provides) but works regardless of the users' login state.
 	// countsKnown distinguishes "successfully read, user has 0 templates" from
@@ -75,14 +96,8 @@ func generateUser(uids []string, run cmdRunner, lookup uidLookup, console consol
 	}
 
 	if len(uids) == 0 {
-		if cu := console(); cu != "" {
-			uids = []string{cu} // no constraint: default to the console user
-		} else {
-			// No constraint and no console user: report every enrolled user.
-			for uid := range counts {
-				uids = append(uids, uid)
-			}
-		}
+		// No constraint: report every real local account.
+		uids = localUsers()
 	}
 
 	var results []map[string]string
@@ -153,5 +168,5 @@ func uidConstraints(qc table.QueryContext) []string {
 
 // osqueryUserGenerate adapts generateUser to osquery-go's table.NewPlugin.
 func osqueryUserGenerate(ctx context.Context, qc table.QueryContext) ([]map[string]string, error) {
-	return generateUser(uidConstraints(qc), defaultCmdRunner, defaultUIDLookup, defaultConsoleUID)
+	return generateUser(uidConstraints(qc), defaultCmdRunner, defaultUIDLookup, defaultLocalUsers)
 }

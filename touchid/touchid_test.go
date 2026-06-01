@@ -150,54 +150,63 @@ func userRunner(t *testing.T, rOut []byte, rErr error) cmdRunner {
 	})
 }
 
-func TestGenerateUser_DefaultsToConsoleUser(t *testing.T) {
-	run := userRunner(t, []byte(userBioutil), nil)
+// allLocal returns a localUsersFunc enumerating the given uids.
+func allLocal(uids ...string) localUsersFunc {
+	return func() []string { return uids }
+}
 
-	// No uid constraint: should fall back to the console user (501).
-	rows, err := generateUser(nil, run, func(string) bool { return true }, func() string { return "501" })
+func TestGenerateUser_NoConstraintEnumeratesAllLocalAccounts(t *testing.T) {
+	// Three local accounts. -c -s reports counts for 501 (1) and 503 (2); 502
+	// has no templates and is absent from -c -s. Only 501 is "logged in" (its
+	// -r succeeds); the others' -r errors. Every account still gets a row.
+	run := func(uid int, name string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) == 2 && args[0] == "-c" && args[1] == "-s":
+			return []byte(allCounts), nil
+		case len(args) == 1 && args[0] == "-r" && uid == 501:
+			return []byte(userBioutil), nil
+		case len(args) == 1 && args[0] == "-r":
+			return nil, errors.New("not logged in")
+		}
+		t.Fatalf("unexpected command: uid=%d %s %v", uid, name, args)
+		return nil, nil
+	}
+
+	rows, err := generateUser(nil, run, func(string) bool { return true }, allLocal("501", "502", "503"))
 	if err != nil {
 		t.Fatalf("generateUser error: %v", err)
 	}
-	if len(rows) != 1 || rows[0]["uid"] != "501" {
-		t.Fatalf("expected one row for console uid 501; got %#v", rows)
-	}
-}
-
-func TestGenerateUser_NoConstraintNoConsole_AllEnrolledUsers(t *testing.T) {
-	// No constraint and no console user: report every enrolled user from -c -s.
-	// 501 is "logged in" (-r succeeds); 503 is not (-r errors) but still gets a
-	// row with its count and empty flags.
-	run := scriptedRunner(t, map[string]struct {
-		out []byte
-		err error
-	}{
-		"-c -s": {out: []byte(allCounts)},
-		"-r":    {err: errors.New("not logged in")}, // both users: no domain
-	})
-
-	rows, err := generateUser(nil, run, func(string) bool { return true }, func() string { return "" })
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("expected a row per enrolled user (501, 503); got %d: %#v", len(rows), rows)
+	if len(rows) != 3 {
+		t.Fatalf("expected a row per local account (501, 502, 503); got %d: %#v", len(rows), rows)
 	}
 	byUID := map[string]map[string]string{}
 	for _, r := range rows {
 		byUID[r["uid"]] = r
 	}
+	// 501: logged in, 1 fingerprint, flags populated.
+	if byUID["501"]["fingerprints_registered"] != "1" || byUID["501"]["touchid_unlock"] != "1" {
+		t.Errorf("501 row wrong: %#v", byUID["501"])
+	}
+	// 502: no enrolled templates (absent from -c -s => 0), logged out => empty flags.
+	if byUID["502"]["fingerprints_registered"] != "0" {
+		t.Errorf("502 count: got %q, want 0", byUID["502"]["fingerprints_registered"])
+	}
+	if byUID["502"]["touchid_unlock"] != "" {
+		t.Errorf("502 logged-out flags should be empty; got %q", byUID["502"]["touchid_unlock"])
+	}
+	// 503: 2 fingerprints from -c -s, logged out => empty flags.
 	if byUID["503"]["fingerprints_registered"] != "2" {
-		t.Errorf("uid 503 count: got %q, want 2", byUID["503"]["fingerprints_registered"])
+		t.Errorf("503 count: got %q, want 2", byUID["503"]["fingerprints_registered"])
 	}
 	if byUID["503"]["touchid_unlock"] != "" {
-		t.Errorf("logged-out user flags should be empty; got %q", byUID["503"]["touchid_unlock"])
+		t.Errorf("503 logged-out flags should be empty; got %q", byUID["503"]["touchid_unlock"])
 	}
 }
 
 func TestGenerateUser_PopulatedRow(t *testing.T) {
 	run := userRunner(t, []byte(userBioutil), nil)
 
-	rows, err := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
+	rows, err := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
 	if err != nil {
 		t.Fatalf("generateUser error: %v", err)
 	}
@@ -219,7 +228,7 @@ func TestGenerateUser_LoggedOutUserHasCountButEmptyFlags(t *testing.T) {
 	// carry the real count with empty (unknown) config flags, NOT 0.
 	run := userRunner(t, nil, errors.New("Failed to get user context"))
 
-	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
+	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row; got %d", len(rows))
 	}
@@ -245,7 +254,7 @@ func TestGenerateUser_ZeroFingerprintsForcesEffectiveZero(t *testing.T) {
 		"-r":    {out: []byte(userBioutil)},                          // says effective = 1
 	})
 
-	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
+	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
 	if rows[0]["fingerprints_registered"] != "0" {
 		t.Errorf("expected 0 fingerprints; got %q", rows[0]["fingerprints_registered"])
 	}
@@ -270,7 +279,7 @@ func TestGenerateUser_CountUnknownDoesNotZeroEffective(t *testing.T) {
 		"-r":    {out: []byte(userBioutil)},
 	})
 
-	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
+	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
 	got := rows[0]
 	if got["fingerprints_registered"] != "" {
 		t.Errorf("count should be empty/unknown when -c -s fails; got %q", got["fingerprints_registered"])
@@ -287,7 +296,7 @@ func TestGenerateUser_SkipsNonexistentUID(t *testing.T) {
 	}{
 		"-c -s": {out: []byte(allCounts)},
 	})
-	rows, err := generateUser([]string{"99999"}, run, func(string) bool { return false }, func() string { return "" })
+	rows, err := generateUser([]string{"99999"}, run, func(string) bool { return false }, func() []string { return nil })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

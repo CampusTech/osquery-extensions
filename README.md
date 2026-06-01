@@ -30,13 +30,13 @@ SELECT * FROM touchid_system_config;
 -- touchid_compatible | secure_enclave | touchid_enabled | touchid_unlock
 -- 1                  | Mac16,5        | 1               | 1
 
-SELECT * FROM touchid_user_config;            -- defaults to the console user
+SELECT * FROM touchid_user_config;            -- one row per local account
 SELECT * FROM touchid_user_config WHERE uid = 501;
 -- uid | fingerprints_registered | touchid_unlock | touchid_applepay | effective_unlock | effective_applepay
 -- 501 | 1                       | 1              | 1                | 1                | 1
 ```
 
-**uid selection.** With no `WHERE uid =`, the table defaults to the user at the GUI console (owner of `/dev/console`), or — if no one is at the console — every user with enrolled fingerprints. Pass `WHERE uid =` to target a specific account.
+**uid selection.** With no `WHERE uid =`, the table returns a row for every real local account (uid 501–60000, enumerated via `dscl . -list /Users UniqueID`). Pass `WHERE uid =` to target a specific account.
 
 The two pieces of per-user data have **different access models**, which is why some columns can be empty:
 

@@ -117,14 +117,8 @@ func countRegistryNodes(out []byte) int {
 	return n
 }
 
-// containsTouchIDAccessory reports whether `ioreg` HID output names a Touch ID
-// input accessory (e.g. a Magic Keyboard with Touch ID). Such a keyboard has no
-// AppleBiometricSensor node of its own but does enroll fingerprints, so it must
-// count as a present sensor. We match the product-string "Touch ID", which
-// Apple uses in the accessory's registry Product entry.
-func containsTouchIDAccessory(out []byte) bool {
-	return strings.Contains(string(out), "Touch ID")
-}
+// (accessory Touch ID detection: see AppleMesaAccessory in system.go — it is a
+// node count via countRegistryNodes, not a string match.)
 
 // defaultCmdRunner runs the command, optionally as a different uid, and returns
 // its stdout. Dropping to a uid is done via `launchctl asuser`, which executes

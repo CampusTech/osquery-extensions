@@ -46,21 +46,20 @@ const biometricSensorMacBook = `+-o AppleBiometricSensor  <class AppleBiometricS
 // built-in sensor: ioreg prints nothing (the class has no instances).
 const biometricSensorNone = ``
 
-// `ioreg -c AppleUserHIDDevice` excerpt on a Mac Studio paired with a Magic
-// Keyboard with Touch ID: the accessory registers a HID device whose product
-// string contains "Touch ID". Trimmed to the relevant node.
-const hidMagicKeyboardTouchID = `+-o Magic Keyboard with Touch ID  <class AppleUserHIDDevice, id 0x100001234, registered, matched, active, busy 0 (0 ms), retain 12>
+// `ioreg -r -c AppleMesaAccessory` on a Mac with an attached Touch ID
+// accessory (e.g. a Magic Keyboard with Touch ID): one AppleMesaAccessory node.
+// Verified on hardware (Mac Studio + Touch ID keyboard reports 1 node).
+const mesaAccessoryPresent = `+-o AppleMesaAccessory  <class AppleMesaAccessory, id 0x100001577, registered, matched, active, busy 0 (0 ms), retain 6>
   | {
-  |   "Product" = "Magic Keyboard with Touch ID"
-  |   "VendorID" = 1452
+  |   "IOClass" = "AppleMesaAccessory"
   | }`
 
-// Same probe on a desktop with only a dumb USB keyboard: no Touch ID HID.
-const hidDumbKeyboard = `+-o USB Keyboard  <class AppleUserHIDDevice, id 0x100005678, registered, matched, active, busy 0 (0 ms), retain 9>
-  | {
-  |   "Product" = "USB Keyboard"
-  |   "VendorID" = 3141
-  | }`
+// `ioreg -r -c AppleMesaAccessory` on a Mac with no attached Touch ID sensor
+// (keyboard-less Mac mini / Mac Studio, or a desktop with a non-Touch-ID
+// keyboard): the class has no instances, so ioreg prints nothing. Verified on
+// hardware (Mac mini reports 0 AppleMesaAccessory nodes even though the SEP
+// scaffolding classes AppleMesaSEPDriver / AppleMesaResources are present).
+const mesaAccessoryNone = ``
 
 // scriptedRunner dispatches on the first argument (e.g. "-r", "-r -s", "-c",
 // "SPiBridgeDataType") so a single runner can serve every call generate makes.
@@ -130,19 +129,19 @@ func TestCountRegistryNodes(t *testing.T) {
 	}
 }
 
-func TestContainsTouchIDAccessory(t *testing.T) {
-	if !containsTouchIDAccessory([]byte(hidMagicKeyboardTouchID)) {
-		t.Error("Magic Keyboard with Touch ID should be detected as an accessory sensor")
+func TestCountRegistryNodes_MesaAccessory(t *testing.T) {
+	if n := countRegistryNodes([]byte(mesaAccessoryPresent)); n != 1 {
+		t.Errorf("attached Touch ID accessory: got %d nodes, want 1", n)
 	}
-	if containsTouchIDAccessory([]byte(hidDumbKeyboard)) {
-		t.Error("a dumb keyboard must not be detected as a Touch ID accessory")
+	if n := countRegistryNodes([]byte(mesaAccessoryNone)); n != 0 {
+		t.Errorf("no Touch ID accessory: got %d nodes, want 0", n)
 	}
 }
 
 // systemRunner wires up every command generateSystem now issues: the chip
-// probe, bioutil -r -s, the built-in biometric-sensor probe, and the HID
-// accessory probe. Pass the canned ioreg outputs per scenario.
-func systemRunner(t *testing.T, builtinSensors, hidAccessory []byte) cmdRunner {
+// probe, bioutil -r -s, the built-in biometric-sensor probe, and the
+// AppleMesaAccessory probe. Pass the canned ioreg outputs per scenario.
+func systemRunner(t *testing.T, builtinSensors, mesaAccessory []byte) cmdRunner {
 	t.Helper()
 	return scriptedRunner(t, map[string]struct {
 		out []byte
@@ -151,13 +150,13 @@ func systemRunner(t *testing.T, builtinSensors, hidAccessory []byte) cmdRunner {
 		"SPiBridgeDataType":          {out: []byte(spiBridge)},
 		"-r -s":                      {out: []byte(systemBioutil)},
 		"-r -c AppleBiometricSensor": {out: builtinSensors},
-		"-c AppleUserHIDDevice":      {out: hidAccessory},
+		"-r -c AppleMesaAccessory":   {out: mesaAccessory},
 	})
 }
 
 func TestGenerateSystem_MacBookBuiltIn(t *testing.T) {
 	// Laptop: built-in sensor nodes present; no accessory keyboard needed.
-	run := systemRunner(t, []byte(biometricSensorMacBook), []byte(hidDumbKeyboard))
+	run := systemRunner(t, []byte(biometricSensorMacBook), []byte(mesaAccessoryNone))
 
 	rows, err := generateSystem(run)
 	if err != nil {
@@ -180,7 +179,7 @@ func TestGenerateSystem_StudioWithTouchIDKeyboard(t *testing.T) {
 	// Desktop with a Magic Keyboard with Touch ID: no built-in sensor, but an
 	// accessory sensor is attached, so the user CAN enroll → not-applicable
 	// gating must NOT kick in (sensor_present=1), but builtin=0.
-	run := systemRunner(t, []byte(biometricSensorNone), []byte(hidMagicKeyboardTouchID))
+	run := systemRunner(t, []byte(biometricSensorNone), []byte(mesaAccessoryPresent))
 
 	rows, err := generateSystem(run)
 	if err != nil {
@@ -197,7 +196,7 @@ func TestGenerateSystem_StudioWithTouchIDKeyboard(t *testing.T) {
 func TestGenerateSystem_BareDesktopNoSensor(t *testing.T) {
 	// Desktop with a dumb keyboard: no built-in sensor, no accessory. This is
 	// the case the policy must treat as N/A.
-	run := systemRunner(t, []byte(biometricSensorNone), []byte(hidDumbKeyboard))
+	run := systemRunner(t, []byte(biometricSensorNone), []byte(mesaAccessoryNone))
 
 	rows, err := generateSystem(run)
 	if err != nil {
@@ -219,7 +218,7 @@ func TestGenerateSystem_BioutilError(t *testing.T) {
 		"SPiBridgeDataType":          {out: []byte(spiBridge)},
 		"-r -s":                      {err: errors.New("bioutil failed")},
 		"-r -c AppleBiometricSensor": {out: []byte(biometricSensorMacBook)},
-		"-c AppleUserHIDDevice":      {out: []byte(hidDumbKeyboard)},
+		"-r -c AppleMesaAccessory":   {out: []byte(mesaAccessoryNone)},
 	})
 
 	rows, err := generateSystem(run)

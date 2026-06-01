@@ -79,13 +79,21 @@ func generateSystem(run cmdRunner) ([]map[string]string, error) {
 	row["touchid_builtin"] = boolValue(builtin)
 
 	// Any usable sensor: built-in, OR an attached Touch ID accessory such as a
-	// Magic Keyboard with Touch ID (which registers a HID device but no
-	// AppleBiometricSensor node). The accessory probe is skipped when a built-in
-	// sensor is already present.
+	// Magic Keyboard with Touch ID. The accessory registers no AppleBiometricSensor
+	// node, but it DOES register an AppleMesaAccessory node ("Mesa" is Apple's
+	// codename for the Touch ID sensor subsystem; the "Accessory" suffix denotes
+	// an external sensor). Verified on hardware: AppleMesaAccessory is 1 with a
+	// Touch ID keyboard attached and 0 on a keyboard-less mini/Studio. This is a
+	// capability class, not a product-string match, so an old pre-Touch-ID Magic
+	// Keyboard (no Mesa accessory) correctly reads as no sensor. Note the sibling
+	// classes AppleMesaSEPDriver / AppleMesaResources are NOT usable here — they
+	// are SEP scaffolding present on every Apple Silicon Mac regardless of an
+	// attached sensor. The accessory probe is skipped when a built-in sensor is
+	// already present.
 	sensorPresent := builtin
 	if !sensorPresent {
-		if out, err := run(-1, ioregPath, "-c", "AppleUserHIDDevice"); err == nil {
-			sensorPresent = containsTouchIDAccessory(out)
+		if out, err := run(-1, ioregPath, "-r", "-c", "AppleMesaAccessory"); err == nil {
+			sensorPresent = countRegistryNodes(out) > 0
 		}
 	}
 	row["touchid_sensor_present"] = boolValue(sensorPresent)

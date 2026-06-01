@@ -14,6 +14,18 @@ func systemColumns() []table.ColumnDefinition {
 		table.TextColumn("secure_enclave"),
 		table.IntegerColumn("touchid_enabled"),
 		table.IntegerColumn("touchid_unlock"),
+		// Hardware-presence flags derived from IORegistry, NOT bioutil.
+		// touchid_compatible above is true on every Apple Silicon Mac (the
+		// Secure Enclave is on-die), so it cannot distinguish a Mac with a
+		// physical Touch ID sensor from a keyboard-less Mac mini/Studio. These
+		// two columns provide that distinction:
+		//   touchid_builtin        – a built-in Touch ID sensor exists (laptops).
+		//   touchid_sensor_present – ANY Touch ID sensor is usable, built-in OR
+		//                            an attached accessory (Magic Keyboard with
+		//                            Touch ID). This is the correct gate for
+		//                            "the user can enroll a fingerprint".
+		table.IntegerColumn("touchid_builtin"),
+		table.IntegerColumn("touchid_sensor_present"),
 	}
 }
 
@@ -56,6 +68,27 @@ func generateSystem(run cmdRunner) ([]map[string]string, error) {
 		row["touchid_enabled"] = boolField(fields, "Biometrics functionality")
 		row["touchid_unlock"] = boolField(fields, "Biometrics for unlock")
 	}
+
+	// Built-in sensor: a laptop exposes one or more AppleBiometricSensor nodes
+	// in the IORegistry; keyboard-less desktops expose none. These columns are
+	// independent of bioutil, so they are always set (defaulting to "0").
+	builtin := false
+	if out, err := run(-1, ioregPath, "-r", "-c", "AppleBiometricSensor"); err == nil {
+		builtin = countRegistryNodes(out) > 0
+	}
+	row["touchid_builtin"] = boolValue(builtin)
+
+	// Any usable sensor: built-in, OR an attached Touch ID accessory such as a
+	// Magic Keyboard with Touch ID (which registers a HID device but no
+	// AppleBiometricSensor node). The accessory probe is skipped when a built-in
+	// sensor is already present.
+	sensorPresent := builtin
+	if !sensorPresent {
+		if out, err := run(-1, ioregPath, "-c", "AppleUserHIDDevice"); err == nil {
+			sensorPresent = containsTouchIDAccessory(out)
+		}
+	}
+	row["touchid_sensor_present"] = boolValue(sensorPresent)
 
 	return []map[string]string{row}, nil
 }

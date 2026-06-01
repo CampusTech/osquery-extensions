@@ -31,6 +31,37 @@ const spiBridge = `Controller:
       Model Identifier: Mac16,5
       Firmware Version: mBoot-18000.120.36`
 
+// Real `ioreg -r -c AppleBiometricSensor` output on a MacBook (built-in Touch
+// ID): one or more hardware nodes. Each registry node line starts with "+-o ".
+const biometricSensorMacBook = `+-o AppleBiometricSensor  <class AppleBiometricSensor, id 0x100000abc, registered, matched, active, busy 0 (0 ms), retain 7>
+  | {
+  |   "IOClass" = "AppleBiometricSensor"
+  | }
++-o AppleBiometricSensor  <class AppleBiometricSensor, id 0x100000abd, registered, matched, active, busy 0 (0 ms), retain 5>
+  | {
+  |   "IOClass" = "AppleBiometricSensor"
+  | }`
+
+// `ioreg -r -c AppleBiometricSensor` on a desktop (Mac Studio / mini) with no
+// built-in sensor: ioreg prints nothing (the class has no instances).
+const biometricSensorNone = ``
+
+// `ioreg -c AppleUserHIDDevice` excerpt on a Mac Studio paired with a Magic
+// Keyboard with Touch ID: the accessory registers a HID device whose product
+// string contains "Touch ID". Trimmed to the relevant node.
+const hidMagicKeyboardTouchID = `+-o Magic Keyboard with Touch ID  <class AppleUserHIDDevice, id 0x100001234, registered, matched, active, busy 0 (0 ms), retain 12>
+  | {
+  |   "Product" = "Magic Keyboard with Touch ID"
+  |   "VendorID" = 1452
+  | }`
+
+// Same probe on a desktop with only a dumb USB keyboard: no Touch ID HID.
+const hidDumbKeyboard = `+-o USB Keyboard  <class AppleUserHIDDevice, id 0x100005678, registered, matched, active, busy 0 (0 ms), retain 9>
+  | {
+  |   "Product" = "USB Keyboard"
+  |   "VendorID" = 3141
+  | }`
+
 // scriptedRunner dispatches on the first argument (e.g. "-r", "-r -s", "-c",
 // "SPiBridgeDataType") so a single runner can serve every call generate makes.
 func scriptedRunner(t *testing.T, responses map[string]struct {
@@ -90,27 +121,93 @@ func TestParseFingerprintCounts_Garbage(t *testing.T) {
 	}
 }
 
-func TestGenerateSystem_AppleSilicon(t *testing.T) {
-	run := scriptedRunner(t, map[string]struct {
+func TestCountRegistryNodes(t *testing.T) {
+	if n := countRegistryNodes([]byte(biometricSensorMacBook)); n != 2 {
+		t.Errorf("MacBook built-in sensors: got %d, want 2", n)
+	}
+	if n := countRegistryNodes([]byte(biometricSensorNone)); n != 0 {
+		t.Errorf("no sensor: got %d, want 0", n)
+	}
+}
+
+func TestContainsTouchIDAccessory(t *testing.T) {
+	if !containsTouchIDAccessory([]byte(hidMagicKeyboardTouchID)) {
+		t.Error("Magic Keyboard with Touch ID should be detected as an accessory sensor")
+	}
+	if containsTouchIDAccessory([]byte(hidDumbKeyboard)) {
+		t.Error("a dumb keyboard must not be detected as a Touch ID accessory")
+	}
+}
+
+// systemRunner wires up every command generateSystem now issues: the chip
+// probe, bioutil -r -s, the built-in biometric-sensor probe, and the HID
+// accessory probe. Pass the canned ioreg outputs per scenario.
+func systemRunner(t *testing.T, builtinSensors, hidAccessory []byte) cmdRunner {
+	t.Helper()
+	return scriptedRunner(t, map[string]struct {
 		out []byte
 		err error
 	}{
-		"SPiBridgeDataType": {out: []byte(spiBridge)},
-		"-r -s":             {out: []byte(systemBioutil)},
+		"SPiBridgeDataType":          {out: []byte(spiBridge)},
+		"-r -s":                      {out: []byte(systemBioutil)},
+		"-r -c AppleBiometricSensor": {out: builtinSensors},
+		"-c AppleUserHIDDevice":      {out: hidAccessory},
 	})
+}
+
+func TestGenerateSystem_MacBookBuiltIn(t *testing.T) {
+	// Laptop: built-in sensor nodes present; no accessory keyboard needed.
+	run := systemRunner(t, []byte(biometricSensorMacBook), []byte(hidDumbKeyboard))
 
 	rows, err := generateSystem(run)
 	if err != nil {
 		t.Fatalf("generateSystem error: %v", err)
 	}
 	want := map[string]string{
-		"touchid_compatible": "1",
-		"secure_enclave":     "Mac16,5",
-		"touchid_enabled":    "1",
-		"touchid_unlock":     "1",
+		"touchid_compatible":     "1",
+		"secure_enclave":         "Mac16,5",
+		"touchid_enabled":        "1",
+		"touchid_unlock":         "1",
+		"touchid_builtin":        "1",
+		"touchid_sensor_present": "1",
 	}
 	if !reflect.DeepEqual(rows[0], want) {
 		t.Errorf("row mismatch\n got: %#v\nwant: %#v", rows[0], want)
+	}
+}
+
+func TestGenerateSystem_StudioWithTouchIDKeyboard(t *testing.T) {
+	// Desktop with a Magic Keyboard with Touch ID: no built-in sensor, but an
+	// accessory sensor is attached, so the user CAN enroll → not-applicable
+	// gating must NOT kick in (sensor_present=1), but builtin=0.
+	run := systemRunner(t, []byte(biometricSensorNone), []byte(hidMagicKeyboardTouchID))
+
+	rows, err := generateSystem(run)
+	if err != nil {
+		t.Fatalf("generateSystem error: %v", err)
+	}
+	if rows[0]["touchid_builtin"] != "0" {
+		t.Errorf("Studio has no built-in sensor; touchid_builtin should be 0, got %q", rows[0]["touchid_builtin"])
+	}
+	if rows[0]["touchid_sensor_present"] != "1" {
+		t.Errorf("Touch ID keyboard attached; touchid_sensor_present should be 1, got %q", rows[0]["touchid_sensor_present"])
+	}
+}
+
+func TestGenerateSystem_BareDesktopNoSensor(t *testing.T) {
+	// Desktop with a dumb keyboard: no built-in sensor, no accessory. This is
+	// the case the policy must treat as N/A.
+	run := systemRunner(t, []byte(biometricSensorNone), []byte(hidDumbKeyboard))
+
+	rows, err := generateSystem(run)
+	if err != nil {
+		t.Fatalf("generateSystem error: %v", err)
+	}
+	if rows[0]["touchid_builtin"] != "0" {
+		t.Errorf("touchid_builtin should be 0, got %q", rows[0]["touchid_builtin"])
+	}
+	if rows[0]["touchid_sensor_present"] != "0" {
+		t.Errorf("no sensor anywhere; touchid_sensor_present should be 0, got %q", rows[0]["touchid_sensor_present"])
 	}
 }
 
@@ -119,8 +216,10 @@ func TestGenerateSystem_BioutilError(t *testing.T) {
 		out []byte
 		err error
 	}{
-		"SPiBridgeDataType": {out: []byte(spiBridge)},
-		"-r -s":             {err: errors.New("bioutil failed")},
+		"SPiBridgeDataType":          {out: []byte(spiBridge)},
+		"-r -s":                      {err: errors.New("bioutil failed")},
+		"-r -c AppleBiometricSensor": {out: []byte(biometricSensorMacBook)},
+		"-c AppleUserHIDDevice":      {out: []byte(hidDumbKeyboard)},
 	})
 
 	rows, err := generateSystem(run)
@@ -131,12 +230,20 @@ func TestGenerateSystem_BioutilError(t *testing.T) {
 	if rows[0]["secure_enclave"] != "Mac16,5" {
 		t.Errorf("secure_enclave: got %q", rows[0]["secure_enclave"])
 	}
-	// When bioutil -r -s fails the integer flag columns are unknown and must be
-	// omitted (NULL), not asserted as "0".
+	// When bioutil -r -s fails the bioutil-derived integer flag columns are
+	// unknown and must be omitted (NULL), not asserted as "0".
 	for _, k := range []string{"touchid_compatible", "touchid_enabled", "touchid_unlock"} {
 		if _, present := rows[0][k]; present {
 			t.Errorf("expected %s omitted (NULL) when bioutil errors; got %q", k, rows[0][k])
 		}
+	}
+	// The ioreg-derived sensor columns are independent of bioutil and must
+	// still be populated.
+	if rows[0]["touchid_builtin"] != "1" {
+		t.Errorf("touchid_builtin is ioreg-derived and should survive a bioutil error; got %q", rows[0]["touchid_builtin"])
+	}
+	if rows[0]["touchid_sensor_present"] != "1" {
+		t.Errorf("touchid_sensor_present should survive a bioutil error; got %q", rows[0]["touchid_sensor_present"])
 	}
 }
 
@@ -256,7 +363,7 @@ func TestGenerateUser_ZeroFingerprintsForcesEffectiveZero(t *testing.T) {
 		err error
 	}{
 		"-c -s": {out: []byte("Operation performed successfully.")}, // nobody enrolled
-		"-r":    {out: []byte(userBioutil)},                          // says effective = 1
+		"-r":    {out: []byte(userBioutil)},                         // says effective = 1
 	})
 
 	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
@@ -311,7 +418,7 @@ func TestGenerateUser_SkipsNonexistentUID(t *testing.T) {
 }
 
 func TestColumns(t *testing.T) {
-	sys := []string{"touchid_compatible", "secure_enclave", "touchid_enabled", "touchid_unlock"}
+	sys := []string{"touchid_compatible", "secure_enclave", "touchid_enabled", "touchid_unlock", "touchid_builtin", "touchid_sensor_present"}
 	sysCols := systemColumns()
 	if len(sysCols) != len(sys) {
 		t.Fatalf("systemColumns: got %d columns, want %d", len(sysCols), len(sys))

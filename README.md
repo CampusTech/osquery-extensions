@@ -27,8 +27,8 @@ Exposes two macOS Touch ID tables. **Apple Silicon only.**
 
 ```sql
 SELECT * FROM touchid_system_config;
--- touchid_compatible | secure_enclave | touchid_enabled | touchid_unlock
--- 1                  | Mac16,5        | 1               | 1
+-- touchid_compatible | secure_enclave | touchid_enabled | touchid_unlock | touchid_builtin | touchid_sensor_present
+-- 1                  | Mac16,5        | 1               | 1              | 1               | 1
 
 SELECT * FROM touchid_user_config;            -- one row per local account
 SELECT * FROM touchid_user_config WHERE uid = 501;
@@ -53,6 +53,8 @@ The two pieces of per-user data have **different access models**, which is why s
 Data sources:
 
 - `bioutil -r -s` — system-wide Touch ID configuration (compatibility, enabled, unlock).
+- `ioreg -r -c AppleBiometricSensor` — counts built-in Touch ID sensor nodes. Reported as `touchid_builtin` (`1` on laptops, `0` on keyboard-less Mac mini/Studio). **Why this matters:** `touchid_compatible` is `1` on _every_ Apple Silicon Mac because the Secure Enclave is on-die, so it cannot tell a Mac that actually has a fingerprint sensor from a keyboard-less desktop. `touchid_builtin` makes that distinction.
+- `ioreg -c AppleUserHIDDevice` — detects an attached Touch ID accessory (e.g. a Magic Keyboard with Touch ID), which enrolls fingerprints but exposes no `AppleBiometricSensor` node. `touchid_sensor_present` is `1` when **either** a built-in sensor **or** such an accessory is present — the correct signal for "this user can enroll a fingerprint." Use it to scope a Touch ID enrollment policy so keyboard-less desktops are treated as not-applicable instead of failing.
 - `bioutil -r` (per-uid, via `launchctl asuser`) — user unlock / Apple Pay flags, including "effective" flags.
 - `bioutil -c -s` (root) — enrolled fingerprint template count for all users.
 - `system_profiler SPiBridgeDataType` — SoC model identifier reported as `secure_enclave` (every Apple Silicon Mac has an on-die Secure Enclave).

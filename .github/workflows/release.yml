@@ -5,11 +5,12 @@ on:
     types: [published]
 
 jobs:
-  build:
+  # mac_enclosure_color ships a universal (arm64 + amd64) binary.
+  mac_enclosure_color:
     name: build mac_enclosure_color
     runs-on: macos-latest
     permissions:
-      contents: write  # required to upload release assets
+      contents: write # required to upload release assets
 
     steps:
       - name: Checkout
@@ -28,7 +29,7 @@ jobs:
           GOOS: darwin
           GOARCH: arm64
         run: |
-          go build -trimpath -ldflags='-s -w' -o ../osquery-extension.arm64.ext .
+          go build -trimpath -ldflags='-s -w' -o ../mac_enclosure_color.arm64.ext .
 
       - name: Build (amd64)
         working-directory: mac_enclosure_color
@@ -37,18 +38,53 @@ jobs:
           GOOS: darwin
           GOARCH: amd64
         run: |
-          go build -trimpath -ldflags='-s -w' -o ../osquery-extension.amd64.ext .
+          go build -trimpath -ldflags='-s -w' -o ../mac_enclosure_color.amd64.ext .
 
       - name: Create universal binary
         run: |
-          lipo -create -output osquery-extension.ext \
-            osquery-extension.arm64.ext \
-            osquery-extension.amd64.ext
-          file osquery-extension.ext
+          lipo -create -output mac_enclosure_color.ext \
+            mac_enclosure_color.arm64.ext \
+            mac_enclosure_color.amd64.ext
+          file mac_enclosure_color.ext
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          gh release upload "$RELEASE_TAG" osquery-extension.ext --clobber
+          gh release upload "$RELEASE_TAG" mac_enclosure_color.ext --clobber
+
+  # touchid is Apple Silicon only (it relies on macOS biometrics / Secure
+  # Enclave tooling), so it ships an arm64-only binary.
+  touchid:
+    name: build touchid
+    runs-on: macos-latest
+    permissions:
+      contents: write # required to upload release assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: touchid/go.mod
+          cache-dependency-path: touchid/go.sum
+
+      - name: Build (arm64)
+        working-directory: touchid
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          go build -trimpath -ldflags='-s -w' -o ../touchid.ext .
+          file ../touchid.ext
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" touchid.ext --clobber

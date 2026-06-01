@@ -61,6 +61,23 @@ Data sources:
 
 `bioutil` output is parsed by line **label** rather than field position, so the tables stay correct on newer macOS releases that add configuration lines. When a user's count is known to be zero, the `effective_*` flags are forced to `0` to work around a `bioutil` quirk that can otherwise report them as enabled.
 
+#### `touchid_sensor_present` is a live, connection-dependent signal
+
+`touchid_builtin` is static per machine (a laptop's sensor is always there). But the accessory half of `touchid_sensor_present` reflects whether a Touch ID input device is **connected at scan time**, not whether the Mac was ever paired with one. A Magic Keyboard with Touch ID that is asleep, powered off, out of battery, or unpaired drops out of the `AppleUserHIDDevice` tree, so `touchid_sensor_present` reads `0` for as long as it is disconnected. It flips back to `1` once the keyboard reconnects.
+
+This is intentional and **fail-safe**: a disconnected sensor means the user genuinely cannot use Touch ID right now, so a Touch ID enrollment policy scoped on `touchid_sensor_present` should treat that host as not-applicable rather than failing it. The trade-off is that an accessory-only desktop (iMac / Mac Studio / Mac mini relying on a wireless Touch ID keyboard) whose keyboard is chronically off will never be flagged for missing enrollment. Laptops and any desktop with a live Touch ID keyboard are unaffected.
+
+Verified across hardware:
+
+| Hardware | `touchid_builtin` | `touchid_sensor_present` |
+| --- | :---: | :---: |
+| MacBook (built-in sensor) | 1 | 1 |
+| Mac Studio / Mac mini, no Touch ID keyboard | 0 | 0 |
+| Mac Studio / iMac + connected Touch ID keyboard | 0 | 1 |
+| Mac Studio / iMac + asleep / dead / unpaired Touch ID keyboard | 0 | 0 |
+
+For comparison, `bioutil -r -s` reports `Biometrics functionality: 1` (and thus `touchid_compatible = 1`) on **every** row above — including the keyboard-less mini and the iMac with a dead keyboard — which is why `touchid_compatible` cannot be used to gate an enrollment policy.
+
 ### Build
 
 ```sh

@@ -114,22 +114,16 @@ func generateUser(uids []string, run cmdRunner, lookup uidLookup, localUsers loc
 			// count is already its zero value when absent.
 		}
 
-		fingerprints := "" // empty = unknown (couldn't read counts)
+		// These are IntegerColumns: a column we can't determine must be omitted
+		// from the row map so osquery reports it as NULL (an empty string is not
+		// a valid integer value). So we only ever SET keys we actually know.
+		row := map[string]string{"uid": uidStr}
 		if hasCount {
-			fingerprints = strconv.Itoa(count)
+			row["fingerprints_registered"] = strconv.Itoa(count)
 		}
 
-		row := map[string]string{
-			"uid":                     uidStr,
-			"fingerprints_registered": fingerprints,
-			"touchid_unlock":          "",
-			"touchid_applepay":        "",
-			"effective_unlock":        "",
-			"effective_applepay":      "",
-		}
-
-		// Config flags require the user's launchd domain; this fails (leaving
-		// the flags empty/unknown) when the user isn't logged in.
+		// Config flags require the user's launchd domain; this fails (and the
+		// flags stay NULL/omitted) when the user isn't logged in.
 		if out, err := run(uid, bioutilPath, "-r"); err == nil {
 			fields := parseBioutil(out)
 			row["touchid_unlock"] = boolField(fields, "Biometrics for unlock")

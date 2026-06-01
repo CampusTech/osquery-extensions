@@ -62,8 +62,8 @@ Data sources:
 ### Build
 
 ```sh
-cd mac_enclosure_color   # or: cd touchid
-GOOS=darwin go build -o mac_enclosure_color.ext
+cd touchid   # or: cd mac_enclosure_color
+GOOS=darwin go build -o "$(basename "$PWD").ext"
 ```
 
 Or build everything with `make build` from the repo root.

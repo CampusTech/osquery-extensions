@@ -37,11 +37,12 @@ func generateSystem(run cmdRunner) ([]map[string]string, error) {
 		}
 	}
 
+	// secure_enclave is a TextColumn, so "" (no chip identifier found) is a valid
+	// value. The three integer flag columns are only set when bioutil -r -s
+	// succeeds; otherwise they are omitted so osquery reports them as NULL
+	// (unknown) rather than asserting a false "0"/disabled.
 	row := map[string]string{
-		"touchid_compatible": "0",
-		"secure_enclave":     secureEnclave,
-		"touchid_enabled":    "0",
-		"touchid_unlock":     "0",
+		"secure_enclave": secureEnclave,
 	}
 
 	if out, err := run(-1, bioutilPath, "-r", "-s"); err == nil {
@@ -49,6 +50,8 @@ func generateSystem(run cmdRunner) ([]map[string]string, error) {
 		// "Biometrics functionality" present means the hardware supports Touch ID.
 		if _, ok := fields["Biometrics functionality"]; ok {
 			row["touchid_compatible"] = "1"
+		} else {
+			row["touchid_compatible"] = "0"
 		}
 		row["touchid_enabled"] = boolField(fields, "Biometrics functionality")
 		row["touchid_unlock"] = boolField(fields, "Biometrics for unlock")

@@ -127,12 +127,16 @@ func TestGenerateSystem_BioutilError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateSystem should swallow runner errors: %v", err)
 	}
-	// Chip still resolves; touch ID flags default to 0/incompatible.
+	// Chip still resolves from system_profiler.
 	if rows[0]["secure_enclave"] != "Mac16,5" {
 		t.Errorf("secure_enclave: got %q", rows[0]["secure_enclave"])
 	}
-	if rows[0]["touchid_compatible"] != "0" {
-		t.Errorf("expected incompatible when bioutil errors; got %q", rows[0]["touchid_compatible"])
+	// When bioutil -r -s fails the integer flag columns are unknown and must be
+	// omitted (NULL), not asserted as "0".
+	for _, k := range []string{"touchid_compatible", "touchid_enabled", "touchid_unlock"} {
+		if _, present := rows[0][k]; present {
+			t.Errorf("expected %s omitted (NULL) when bioutil errors; got %q", k, rows[0][k])
+		}
 	}
 }
 
@@ -187,19 +191,20 @@ func TestGenerateUser_NoConstraintEnumeratesAllLocalAccounts(t *testing.T) {
 	if byUID["501"]["fingerprints_registered"] != "1" || byUID["501"]["touchid_unlock"] != "1" {
 		t.Errorf("501 row wrong: %#v", byUID["501"])
 	}
-	// 502: no enrolled templates (absent from -c -s => 0), logged out => empty flags.
+	// 502: no enrolled templates (absent from -c -s => known 0), logged out =>
+	// flags omitted (NULL).
 	if byUID["502"]["fingerprints_registered"] != "0" {
 		t.Errorf("502 count: got %q, want 0", byUID["502"]["fingerprints_registered"])
 	}
-	if byUID["502"]["touchid_unlock"] != "" {
-		t.Errorf("502 logged-out flags should be empty; got %q", byUID["502"]["touchid_unlock"])
+	if _, present := byUID["502"]["touchid_unlock"]; present {
+		t.Errorf("502 logged-out flags should be omitted (NULL); got %q", byUID["502"]["touchid_unlock"])
 	}
-	// 503: 2 fingerprints from -c -s, logged out => empty flags.
+	// 503: 2 fingerprints from -c -s, logged out => flags omitted (NULL).
 	if byUID["503"]["fingerprints_registered"] != "2" {
 		t.Errorf("503 count: got %q, want 2", byUID["503"]["fingerprints_registered"])
 	}
-	if byUID["503"]["touchid_unlock"] != "" {
-		t.Errorf("503 logged-out flags should be empty; got %q", byUID["503"]["touchid_unlock"])
+	if _, present := byUID["503"]["touchid_unlock"]; present {
+		t.Errorf("503 logged-out flags should be omitted (NULL); got %q", byUID["503"]["touchid_unlock"])
 	}
 }
 
@@ -223,9 +228,9 @@ func TestGenerateUser_PopulatedRow(t *testing.T) {
 	}
 }
 
-func TestGenerateUser_LoggedOutUserHasCountButEmptyFlags(t *testing.T) {
+func TestGenerateUser_LoggedOutUserHasCountButOmittedFlags(t *testing.T) {
 	// `-r` fails (logged out) but `-c -s` still reports a count: the row must
-	// carry the real count with empty (unknown) config flags, NOT 0.
+	// carry the real count, with config flags omitted (NULL) — NOT 0.
 	run := userRunner(t, nil, errors.New("Failed to get user context"))
 
 	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
@@ -237,8 +242,8 @@ func TestGenerateUser_LoggedOutUserHasCountButEmptyFlags(t *testing.T) {
 		t.Errorf("count should come from -c -s even when logged out; got %q", got["fingerprints_registered"])
 	}
 	for _, k := range []string{"touchid_unlock", "touchid_applepay", "effective_unlock", "effective_applepay"} {
-		if got[k] != "" {
-			t.Errorf("flag %s should be empty (unknown) when logged out; got %q", k, got[k])
+		if _, present := got[k]; present {
+			t.Errorf("flag %s should be omitted (NULL) when logged out; got %q", k, got[k])
 		}
 	}
 }
@@ -281,8 +286,8 @@ func TestGenerateUser_CountUnknownDoesNotZeroEffective(t *testing.T) {
 
 	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() []string { return nil })
 	got := rows[0]
-	if got["fingerprints_registered"] != "" {
-		t.Errorf("count should be empty/unknown when -c -s fails; got %q", got["fingerprints_registered"])
+	if _, present := got["fingerprints_registered"]; present {
+		t.Errorf("count should be omitted (NULL) when -c -s fails; got %q", got["fingerprints_registered"])
 	}
 	if got["effective_unlock"] != "1" || got["effective_applepay"] != "1" {
 		t.Errorf("effective flags must be preserved when count unknown; got %#v", got)

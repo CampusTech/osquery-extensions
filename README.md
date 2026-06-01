@@ -36,6 +36,11 @@ SELECT * FROM touchid_user_config WHERE uid = 501;
 -- 501 | 1                       | 1              | 1                | 1                | 1
 ```
 
+> [!WARNING]
+> **Do not use `touchid_compatible` or `touchid_enabled` to test whether a Mac has a Touch ID sensor.** Both are derived from `bioutil`'s `Biometrics functionality` flag, which reports the **Secure Enclave**, not a physical fingerprint sensor. The Secure Enclave is on-die on every Apple Silicon Mac, so **both columns are `1` on every Apple Silicon machine** — including a keyboard-less Mac mini or Mac Studio, and an iMac whose Touch ID keyboard is dead or disconnected. None of those can actually enroll or use Touch ID, yet they all report `touchid_compatible = 1` / `touchid_enabled = 1`.
+>
+> To test for a usable sensor, use **`touchid_sensor_present`** (built-in **or** an attached Touch ID accessory) or **`touchid_builtin`** (built-in sensor only). See [the data sources](#data-sources) and the [connection-dependent caveat](#touchid_sensor_present-is-a-live-connection-dependent-signal) below.
+
 **uid selection.** With no `WHERE uid =`, the table returns a row for every real local account (uid 501–60000, enumerated via `dscl . -list /Users UniqueID`). Pass `WHERE uid =` to target a specific account.
 
 The two pieces of per-user data have **different access models**, which is why some columns can be empty:
@@ -50,7 +55,7 @@ The two pieces of per-user data have **different access models**, which is why s
 - Not running as root → `fingerprints_registered` is empty.
 - User not logged in → the four config flags are empty (the count is still reported).
 
-Data sources:
+#### Data sources
 
 - `bioutil -r -s` — system-wide Touch ID configuration (compatibility, enabled, unlock).
 - `ioreg -r -c AppleBiometricSensor` — counts built-in Touch ID sensor nodes. Reported as `touchid_builtin` (`1` on laptops, `0` on keyboard-less Mac mini/Studio). **Why this matters:** `touchid_compatible` is `1` on _every_ Apple Silicon Mac because the Secure Enclave is on-die, so it cannot tell a Mac that actually has a fingerprint sensor from a keyboard-less desktop. `touchid_builtin` makes that distinction.

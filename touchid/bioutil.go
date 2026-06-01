@@ -12,6 +12,7 @@ import (
 const (
 	bioutilPath       = "/usr/bin/bioutil"
 	systemProfilerBin = "/usr/sbin/system_profiler"
+	ioregPath         = "/usr/sbin/ioreg"
 )
 
 // cmdRunner abstracts external command execution so tests can inject canned
@@ -91,6 +92,33 @@ func parseFingerprintCounts(out []byte) map[string]int {
 	}
 	return counts
 }
+
+// boolValue renders a Go bool as the "1"/"0" osquery integer-column convention.
+func boolValue(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}
+
+// countRegistryNodes counts IORegistry entries in `ioreg` output. ioreg prints
+// one node per "+-o " line (the tree-branch marker), so counting those lines
+// yields the number of matched instances of an IOClass. Used to detect built-in
+// Touch ID hardware via `ioreg -r -c AppleBiometricSensor`: laptops expose one
+// or more AppleBiometricSensor nodes, keyboard-less desktops (Mac mini/Studio)
+// expose none — even though both report Secure Enclave capability in bioutil.
+func countRegistryNodes(out []byte) int {
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "+-o ") {
+			n++
+		}
+	}
+	return n
+}
+
+// (accessory Touch ID detection: see AppleMesaAccessory in system.go — it is a
+// node count via countRegistryNodes, not a string match.)
 
 // defaultCmdRunner runs the command, optionally as a different uid, and returns
 // its stdout. Dropping to a uid is done via `launchctl asuser`, which executes

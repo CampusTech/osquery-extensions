@@ -127,10 +127,33 @@ func TestGenerateSystem_BioutilError(t *testing.T) {
 	}
 }
 
-func TestGenerateUser_RequiresUID(t *testing.T) {
-	_, err := generateUser(nil, nil, nil)
-	if err == nil {
-		t.Fatal("expected error when no uid constraint provided")
+func TestGenerateUser_DefaultsToConsoleUser(t *testing.T) {
+	run := scriptedRunner(t, map[string]struct {
+		out []byte
+		err error
+	}{
+		"-r": {out: []byte(userBioutil)},
+		"-c": {out: []byte(userBioutilCount)},
+	})
+
+	// No uid constraint: should fall back to the console user (501).
+	rows, err := generateUser(nil, run, func(string) bool { return true }, func() string { return "501" })
+	if err != nil {
+		t.Fatalf("generateUser error: %v", err)
+	}
+	if len(rows) != 1 || rows[0]["uid"] != "501" {
+		t.Fatalf("expected one row for console uid 501; got %#v", rows)
+	}
+}
+
+func TestGenerateUser_NoConstraintNoConsole(t *testing.T) {
+	// No constraint and no console user (e.g. logged out) -> no rows, no error.
+	rows, err := generateUser(nil, nil, nil, func() string { return "" })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected no rows when no console user; got %d", len(rows))
 	}
 }
 
@@ -143,7 +166,7 @@ func TestGenerateUser_PopulatedRow(t *testing.T) {
 		"-c": {out: []byte(userBioutilCount)},
 	})
 
-	rows, err := generateUser([]string{"501"}, run, func(string) bool { return true })
+	rows, err := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
 	if err != nil {
 		t.Fatalf("generateUser error: %v", err)
 	}
@@ -172,7 +195,7 @@ func TestGenerateUser_ZeroFingerprintsForcesEffectiveZero(t *testing.T) {
 		"-c": {out: []byte(zeroCount)},
 	})
 
-	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true })
+	rows, _ := generateUser([]string{"501"}, run, func(string) bool { return true }, func() string { return "" })
 	if rows[0]["effective_unlock"] != "0" || rows[0]["effective_applepay"] != "0" {
 		t.Errorf("zero fingerprints should force effective flags to 0; got %#v", rows[0])
 	}
@@ -183,7 +206,7 @@ func TestGenerateUser_ZeroFingerprintsForcesEffectiveZero(t *testing.T) {
 }
 
 func TestGenerateUser_SkipsNonexistentUID(t *testing.T) {
-	rows, err := generateUser([]string{"99999"}, nil, func(string) bool { return false })
+	rows, err := generateUser([]string{"99999"}, nil, func(string) bool { return false }, func() string { return "" })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

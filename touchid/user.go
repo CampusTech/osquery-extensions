@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os/user"
 	"strconv"
+	"syscall"
 
 	"github.com/osquery/osquery-go/plugin/table"
 )
@@ -29,13 +29,31 @@ func defaultUIDLookup(uid string) bool {
 	return err == nil
 }
 
+// consoleUIDFunc returns the uid of the user currently at the GUI console, or
+// "" if it can't be determined; injected for testability.
+type consoleUIDFunc func() string
+
+// defaultConsoleUID reads the owner of /dev/console, which macOS assigns to the
+// user with the active GUI (loginwindow) session.
+func defaultConsoleUID() string {
+	var st syscall.Stat_t
+	if err := syscall.Stat("/dev/console", &st); err != nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(st.Uid), 10)
+}
+
 // generateUser builds one touchid_user_config row per uid named in the query's
-// `uid =` constraints. A uid constraint is required: per-user Touch ID state is
-// only meaningful for a specific account, and bioutil must run in that user's
-// context. Dependencies are injected so the function is unit-testable.
-func generateUser(uids []string, run cmdRunner, lookup uidLookup) ([]map[string]string, error) {
+// `uid =` constraints. When no uid constraint is given, it falls back to the
+// user at the GUI console — per-user Touch ID state is only meaningful for a
+// specific account, and bioutil must run in that user's launchd context.
+// Dependencies are injected so the function is unit-testable.
+func generateUser(uids []string, run cmdRunner, lookup uidLookup, console consoleUIDFunc) ([]map[string]string, error) {
 	if len(uids) == 0 {
-		return nil, errors.New("the touchid_user_config table requires a constraint WHERE uid =")
+		// No constraint: default to the console user, if there is one.
+		if cu := console(); cu != "" {
+			uids = []string{cu}
+		}
 	}
 
 	var results []map[string]string
@@ -98,5 +116,5 @@ func uidConstraints(qc table.QueryContext) []string {
 
 // osqueryUserGenerate adapts generateUser to osquery-go's table.NewPlugin.
 func osqueryUserGenerate(ctx context.Context, qc table.QueryContext) ([]map[string]string, error) {
-	return generateUser(uidConstraints(qc), defaultCmdRunner, defaultUIDLookup)
+	return generateUser(uidConstraints(qc), defaultCmdRunner, defaultUIDLookup, defaultConsoleUID)
 }

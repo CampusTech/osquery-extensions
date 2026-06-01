@@ -30,12 +30,13 @@ SELECT * FROM touchid_system_config;
 -- touchid_compatible | secure_enclave | touchid_enabled | touchid_unlock
 -- 1                  | Mac16,5        | 1               | 1
 
+SELECT * FROM touchid_user_config;            -- defaults to the console user
 SELECT * FROM touchid_user_config WHERE uid = 501;
 -- uid | fingerprints_registered | touchid_unlock | touchid_applepay | effective_unlock | effective_applepay
 -- 501 | 1                       | 1              | 1                | 1                | 1
 ```
 
-`touchid_user_config` **requires** a `WHERE uid =` constraint; per-user Touch ID state is only meaningful for a specific account, and `bioutil` must run in that user's launchd context (the extension uses `launchctl asuser`).
+`touchid_user_config` defaults to the user at the GUI console when no `WHERE uid =` is given; pass `WHERE uid =` to target a specific account. Per-user Touch ID state is only meaningful for a specific account, and `bioutil` must run in that user's launchd context (the extension uses `launchctl asuser`), so the queried user must be logged in.
 
 Data sources:
 

@@ -43,16 +43,45 @@ func defaultConsoleUID() string {
 	return strconv.FormatUint(uint64(st.Uid), 10)
 }
 
-// generateUser builds one touchid_user_config row per uid named in the query's
-// `uid =` constraints. When no uid constraint is given, it falls back to the
-// user at the GUI console — per-user Touch ID state is only meaningful for a
-// specific account, and bioutil must run in that user's launchd context.
+// generateUser builds touchid_user_config rows. Two bioutil data sources with
+// different access models are combined:
+//
+//   - Enrolled fingerprint count: `bioutil -c -s` run as root (the context
+//     fleetd/orbit provides) reports counts for ALL enrolled users at once and
+//     does NOT require the user to be logged in.
+//   - Config flags (unlock / ApplePay / effective): `bioutil -r` must run
+//     inside the target user's launchd domain via `launchctl asuser`, which
+//     only exists while the user is logged in. There is no admin form to read
+//     another user's config flags.
+//
+// Target uid selection: the query's `uid =` constraints if any, else the GUI
+// console user, else every user with enrolled templates from `-c -s`. For a
+// user whose config flags can't be read (e.g. logged out), the count is still
+// reported and the four flag columns are left empty rather than defaulted to 0
+// (which would misrepresent an enabled-but-offline user as disabled).
+//
 // Dependencies are injected so the function is unit-testable.
 func generateUser(uids []string, run cmdRunner, lookup uidLookup, console consoleUIDFunc) ([]map[string]string, error) {
+	// Counts for all enrolled users. `bioutil -c -s` requires root (the context
+	// fleetd/orbit provides) but works regardless of the users' login state.
+	// countsKnown distinguishes "successfully read, user has 0 templates" from
+	// "couldn't read counts at all" (e.g. not running as root) — they must be
+	// reported differently.
+	counts := map[string]int{}
+	countsKnown := false
+	if out, err := run(-1, bioutilPath, "-c", "-s"); err == nil {
+		counts = parseFingerprintCounts(out)
+		countsKnown = true
+	}
+
 	if len(uids) == 0 {
-		// No constraint: default to the console user, if there is one.
 		if cu := console(); cu != "" {
-			uids = []string{cu}
+			uids = []string{cu} // no constraint: default to the console user
+		} else {
+			// No constraint and no console user: report every enrolled user.
+			for uid := range counts {
+				uids = append(uids, uid)
+			}
 		}
 	}
 
@@ -63,36 +92,44 @@ func generateUser(uids []string, run cmdRunner, lookup uidLookup, console consol
 			continue // skip non-numeric or nonexistent uids
 		}
 
-		row := map[string]string{
-			"uid":                     uidStr,
-			"fingerprints_registered": "0",
-			"touchid_unlock":          "0",
-			"touchid_applepay":        "0",
-			"effective_unlock":        "0",
-			"effective_applepay":      "0",
+		count, hasCount := counts[uidStr]
+		// When -c -s succeeded, a uid absent from its output has 0 templates.
+		if countsKnown {
+			hasCount = true
+			// count is already its zero value when absent.
 		}
 
+		fingerprints := "" // empty = unknown (couldn't read counts)
+		if hasCount {
+			fingerprints = strconv.Itoa(count)
+		}
+
+		row := map[string]string{
+			"uid":                     uidStr,
+			"fingerprints_registered": fingerprints,
+			"touchid_unlock":          "",
+			"touchid_applepay":        "",
+			"effective_unlock":        "",
+			"effective_applepay":      "",
+		}
+
+		// Config flags require the user's launchd domain; this fails (leaving
+		// the flags empty/unknown) when the user isn't logged in.
 		if out, err := run(uid, bioutilPath, "-r"); err == nil {
 			fields := parseBioutil(out)
 			row["touchid_unlock"] = boolField(fields, "Biometrics for unlock")
 			row["touchid_applepay"] = boolField(fields, "Biometrics for ApplePay")
 			row["effective_unlock"] = boolField(fields, "Effective biometrics for unlock")
 			row["effective_applepay"] = boolField(fields, "Effective biometrics for ApplePay")
-		}
 
-		count := 0
-		if out, err := run(uid, bioutilPath, "-c"); err == nil {
-			count = parseFingerprintCount(out)
-		}
-		row["fingerprints_registered"] = strconv.Itoa(count)
-
-		// Workaround for a long-standing bioutil quirk: the "Effective" flags in
-		// `bioutil -r` can report 1 even with no fingerprints enrolled. With zero
-		// templates, Touch ID cannot actually be used, so force the effective
-		// flags to 0.
-		if count == 0 {
-			row["effective_unlock"] = "0"
-			row["effective_applepay"] = "0"
+			// Workaround for a long-standing bioutil quirk: the "Effective" flags
+			// in `bioutil -r` can report 1 even with no fingerprints enrolled.
+			// Only apply it when we KNOW the count is genuinely 0 — not when the
+			// count is merely unknown because -c -s couldn't run.
+			if hasCount && count == 0 {
+				row["effective_unlock"] = "0"
+				row["effective_applepay"] = "0"
+			}
 		}
 
 		results = append(results, row)

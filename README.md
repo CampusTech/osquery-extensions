@@ -36,16 +36,28 @@ SELECT * FROM touchid_user_config WHERE uid = 501;
 -- 501 | 1                       | 1              | 1                | 1                | 1
 ```
 
-`touchid_user_config` defaults to the user at the GUI console when no `WHERE uid =` is given; pass `WHERE uid =` to target a specific account. Per-user Touch ID state is only meaningful for a specific account, and `bioutil` must run in that user's launchd context (the extension uses `launchctl asuser`), so the queried user must be logged in.
+**uid selection.** With no `WHERE uid =`, the table defaults to the user at the GUI console (owner of `/dev/console`), or — if no one is at the console — every user with enrolled fingerprints. Pass `WHERE uid =` to target a specific account.
+
+The two pieces of per-user data have **different access models**, which is why some columns can be empty:
+
+| Column(s) | Source | Needs root? | Needs the user logged in? |
+| --- | --- | --- | --- |
+| `fingerprints_registered` | `bioutil -c -s` (reads all users at once) | **Yes** | No |
+| `touchid_unlock`, `touchid_applepay`, `effective_*` | `bioutil -r` via `launchctl asuser <uid>` | No | **Yes** |
+
+`fleetd` / `orbit` runs extensions as **root**, so `bioutil -c -s` works there. When a column can't be read it is left **empty (unknown)** rather than `0`, so an enabled-but-logged-out user is never misreported as disabled:
+
+- Not running as root → `fingerprints_registered` is empty.
+- User not logged in → the four config flags are empty (the count is still reported).
 
 Data sources:
 
 - `bioutil -r -s` — system-wide Touch ID configuration (compatibility, enabled, unlock).
-- `bioutil -r` (per-uid) — user unlock / Apple Pay flags, including "effective" flags.
-- `bioutil -c` (per-uid) — enrolled fingerprint template count.
+- `bioutil -r` (per-uid, via `launchctl asuser`) — user unlock / Apple Pay flags, including "effective" flags.
+- `bioutil -c -s` (root) — enrolled fingerprint template count for all users.
 - `system_profiler SPiBridgeDataType` — SoC model identifier reported as `secure_enclave` (every Apple Silicon Mac has an on-die Secure Enclave).
 
-`bioutil` output is parsed by line **label** rather than field position, so the tables stay correct on newer macOS releases that add configuration lines. When a user has zero enrolled fingerprints, the `effective_*` flags are forced to `0` to work around a `bioutil` quirk that can otherwise report them as enabled.
+`bioutil` output is parsed by line **label** rather than field position, so the tables stay correct on newer macOS releases that add configuration lines. When a user's count is known to be zero, the `effective_*` flags are forced to `0` to work around a `bioutil` quirk that can otherwise report them as enabled.
 
 ### Build
 

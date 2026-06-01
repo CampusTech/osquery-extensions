@@ -63,22 +63,33 @@ func boolField(fields map[string]string, key string) string {
 	return "0"
 }
 
-// parseFingerprintCount extracts the enrolled-template count from `bioutil -c`
-// output, e.g. "User 501:\t1 biometric template(s)" -> 1. Returns 0 if the
-// count can't be found.
-func parseFingerprintCount(out []byte) int {
+// parseFingerprintCounts extracts enrolled-template counts from `bioutil -c`
+// (single user) or `bioutil -c -s` (all enrolled users, root) output, keyed by
+// uid. Each data line looks like "User 501:\t1 biometric template(s)". Users
+// with zero enrolled templates do not appear in `-c -s` output, so a uid absent
+// from the returned map should be treated as count 0.
+func parseFingerprintCounts(out []byte) map[string]int {
+	counts := make(map[string]int)
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
+		// Expect: ["User", "<uid>:", "<n>", "biometric", "template(s)"]
+		if len(fields) < 4 || fields[0] != "User" {
+			continue
+		}
+		uid := strings.TrimSuffix(fields[1], ":")
+		if _, err := strconv.Atoi(uid); err != nil {
+			continue
+		}
 		for i, f := range fields {
-			// The count is the integer immediately preceding "biometric".
 			if strings.HasPrefix(f, "biometric") && i > 0 {
 				if n, err := strconv.Atoi(fields[i-1]); err == nil {
-					return n
+					counts[uid] = n
 				}
+				break
 			}
 		}
 	}
-	return 0
+	return counts
 }
 
 // defaultCmdRunner runs the command, optionally as a different uid, and returns

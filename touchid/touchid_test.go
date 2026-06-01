@@ -312,13 +312,22 @@ func TestGenerateUser_SkipsNonexistentUID(t *testing.T) {
 
 func TestColumns(t *testing.T) {
 	sys := []string{"touchid_compatible", "secure_enclave", "touchid_enabled", "touchid_unlock"}
-	for i, c := range systemColumns() {
+	sysCols := systemColumns()
+	if len(sysCols) != len(sys) {
+		t.Fatalf("systemColumns: got %d columns, want %d", len(sysCols), len(sys))
+	}
+	for i, c := range sysCols {
 		if c.Name != sys[i] {
 			t.Errorf("systemColumns[%d] = %q, want %q", i, c.Name, sys[i])
 		}
 	}
+
 	usr := []string{"uid", "fingerprints_registered", "touchid_unlock", "touchid_applepay", "effective_unlock", "effective_applepay"}
-	for i, c := range userColumns() {
+	usrCols := userColumns()
+	if len(usrCols) != len(usr) {
+		t.Fatalf("userColumns: got %d columns, want %d", len(usrCols), len(usr))
+	}
+	for i, c := range usrCols {
 		if c.Name != usr[i] {
 			t.Errorf("userColumns[%d] = %q, want %q", i, c.Name, usr[i])
 		}

@@ -106,6 +106,50 @@ func TestGenerate_MacStudioForcedSilver(t *testing.T) {
 	}
 }
 
+func TestCachedModelName_OnlyCachesSuccess(t *testing.T) {
+	// Reset the package-level cache for a deterministic test.
+	modelMu.Lock()
+	cachedModel, modelCached = "", false
+	modelMu.Unlock()
+
+	calls := 0
+	failing := func(name string, args ...string) ([]byte, error) {
+		calls++
+		return nil, errors.New("system_profiler failed")
+	}
+	// A failed lookup must NOT be cached: it returns "" and retries next time.
+	if got := cachedModelNameWith(failing); got != "" {
+		t.Errorf("expected empty model on failure, got %q", got)
+	}
+	if got := cachedModelNameWith(failing); got != "" {
+		t.Errorf("expected empty model on second failure, got %q", got)
+	}
+	if calls != 2 {
+		t.Errorf("failed lookups must retry; expected 2 calls, got %d", calls)
+	}
+
+	// A successful lookup IS cached: subsequent calls don't invoke the runner.
+	calls = 0
+	ok := func(name string, args ...string) ([]byte, error) {
+		calls++
+		return []byte(mbpProfilerJSON), nil
+	}
+	if got := cachedModelNameWith(ok); got != "MacBook Pro" {
+		t.Errorf("expected MacBook Pro, got %q", got)
+	}
+	if got := cachedModelNameWith(ok); got != "MacBook Pro" {
+		t.Errorf("expected cached MacBook Pro, got %q", got)
+	}
+	if calls != 1 {
+		t.Errorf("successful lookup must be cached; expected 1 call, got %d", calls)
+	}
+
+	// Clean up shared state so other tests aren't affected.
+	modelMu.Lock()
+	cachedModel, modelCached = "", false
+	modelMu.Unlock()
+}
+
 func TestColumns(t *testing.T) {
 	cols := columns()
 	want := []string{"color", "color_code", "model", "product_type"}

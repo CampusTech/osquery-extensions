@@ -64,18 +64,36 @@ func readModelName(run cmdRunner) string {
 	return parseModelName(out)
 }
 
-// The model name is static per process; cache it so we don't spawn
-// system_profiler (which can take seconds) on every query.
+// The model name is static per process, so cache it to avoid spawning
+// system_profiler (which can take seconds) on every query. Only a SUCCESSFUL
+// lookup is cached: if system_profiler fails transiently we must not cache the
+// empty result, or the model-specific rules in resolveColor would be disabled
+// for the rest of the process. An empty result simply retries on the next call.
 var (
-	modelOnce   sync.Once
+	modelMu     sync.Mutex
 	cachedModel string
+	modelCached bool
 )
 
 func cachedModelName() string {
-	modelOnce.Do(func() {
-		cachedModel = readModelName(defaultCmdRunner)
-	})
-	return cachedModel
+	return cachedModelNameWith(defaultCmdRunner)
+}
+
+// cachedModelNameWith is the testable core of cachedModelName: it memoizes the
+// model name across calls, caching only non-empty (successful) lookups.
+func cachedModelNameWith(run cmdRunner) string {
+	modelMu.Lock()
+	defer modelMu.Unlock()
+
+	if modelCached {
+		return cachedModel
+	}
+	model := readModelName(run)
+	if model != "" {
+		cachedModel = model
+		modelCached = true
+	}
+	return model
 }
 
 // osqueryGenerate is the adapter used by osquery-go's table.NewPlugin. It wires

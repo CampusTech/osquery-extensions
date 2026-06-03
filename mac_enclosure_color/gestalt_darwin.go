@@ -6,6 +6,8 @@ package main
 #cgo LDFLAGS: -framework CoreFoundation
 #include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 
 typedef CFTypeRef (*MGCopyAnswerFn)(CFStringRef);
@@ -35,7 +37,18 @@ static int mg_int(const char* key) {
     } else if (tid == CFStringGetTypeID()) {
         char buf[64];
         if (CFStringGetCString((CFStringRef)v, buf, sizeof(buf), kCFStringEncodingUTF8)) {
-            result = atoi(buf);
+            // Checked conversion: atoi() returns 0 for non-numeric input, which
+            // would surface as a bogus code 0. strtol with an end-pointer lets
+            // us reject non-numeric / out-of-range values and return -1 so the
+            // Go side reports (0, false) rather than (0, true).
+            char* end = NULL;
+            errno = 0;
+            long n = strtol(buf, &end, 10);
+            if (end != buf && *end == '\0' && errno == 0 && n >= 0 && n <= INT_MAX) {
+                result = (int)n;
+            } else {
+                result = -1;
+            }
         }
     }
     CFRelease(v);
@@ -67,6 +80,7 @@ static char* mg_string(const char* key) {
 import "C"
 
 import (
+	"sync"
 	"unsafe"
 )
 
@@ -75,11 +89,17 @@ import (
 // it performs a one-time dlopen + dlsym lookup of MGCopyAnswer.
 type mobileGestalt struct{}
 
+// loadOnce guards the dlopen/dlsym so the dynamic-loader work happens exactly
+// once per process even if the table is queried concurrently. (The C side is
+// also idempotent, but the Go-side guard avoids redundant cgo calls and makes
+// initialization ordering explicit.)
+var loadOnce sync.Once
+
 // newMobileGestalt loads libMobileGestalt.dylib and returns a Gestalt. If
 // loading fails, the returned Gestalt still satisfies the interface but every
 // lookup returns the not-present result.
 func newMobileGestalt() Gestalt {
-	C.load_mg()
+	loadOnce.Do(func() { C.load_mg() })
 	return mobileGestalt{}
 }
 

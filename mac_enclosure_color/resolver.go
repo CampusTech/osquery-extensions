@@ -12,13 +12,30 @@ type colorRule struct {
 	Color       string
 }
 
-// colorRules is the ordered table of how to map a Mac's identifying
-// fields to its human-readable enclosure color name. The order matters:
-// model-specific rules MUST come before universal-code rules so that they
-// take precedence (e.g. iMac+code=3 -> Yellow before universal Sky Blue).
+// colorRules maps a Mac's identifying fields to its human-readable enclosure
+// color. Order matters: model-specific rules MUST precede universal-code rules
+// so they take precedence (e.g. iMac + code 3 -> "Yellow" before any universal
+// code rule).
 //
-// Mirrors munkireport/ibridge (https://github.com/munkireport/ibridge),
-// the canonical reference for this mapping in the Mac admin community.
+// WHY THIS IS A HARDCODED TABLE (and not derived programmatically): macOS does
+// not expose the enclosure color *name* anywhere. The private MobileGestalt
+// DeviceEnclosureColor key returns only a numeric code, and that code is
+// ambiguous across models -- code 3 is "Yellow" on iMac but "Gold" on MacBook
+// Air; code 7 is "Purple" vs "Midnight"; code 8 is "Orange" vs "Starlight" --
+// so the code alone cannot yield a name without model context. system_profiler
+// and ioreg carry no color field on Apple Silicon, and post-2021 serial numbers
+// are randomized (no config-code decode). The canonical community reference,
+// munkireport/ibridge, hardcodes this exact model-conditioned table for the
+// same reason:
+// https://github.com/munkireport/ibridge/blob/master/scripts/ibridge.py
+//
+// To update when Apple ships a new color: add a rule below mirroring ibridge.
+// The raw code is always exposed as the color_code column, so an unmapped color
+// still surfaces (as code N / "Unknown") without a code change.
+//
+// This standalone Campus extension is the maintained home for this table:
+// macadmins/osquery-extension declined it (PR #111) specifically because of the
+// upkeep of this hardcoded mapping, so we keep it here where we actively use it.
 var colorRules = []colorRule{
 	// Model-forced (no code lookup needed).
 	{ProductType: "Macmini8,1", Color: "Space Gray"},

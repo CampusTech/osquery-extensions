@@ -30,7 +30,7 @@ func TestGenerate_PopulatedRow(t *testing.T) {
 	}
 	run := staticRunner([]byte(mbpProfilerJSON), nil)
 
-	rows, err := generate(g, run)
+	rows, err := generate(g, func() string { return readModelName(run) })
 	if err != nil {
 		t.Fatalf("generate returned error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestGenerate_MissingColorCode(t *testing.T) {
 	}
 	run := staticRunner([]byte(mbpProfilerJSON), nil)
 
-	rows, err := generate(g, run)
+	rows, err := generate(g, func() string { return readModelName(run) })
 	if err != nil {
 		t.Fatalf("generate returned error: %v", err)
 	}
@@ -64,8 +64,10 @@ func TestGenerate_MissingColorCode(t *testing.T) {
 	if got["color"] != "Unknown" {
 		t.Errorf("expected Unknown color when no code; got %q", got["color"])
 	}
-	if got["color_code"] != "" {
-		t.Errorf("expected empty color_code when no code; got %q", got["color_code"])
+	// color_code is an IntegerColumn: when the code is unknown the key must be
+	// omitted (NULL), not present as "".
+	if _, present := got["color_code"]; present {
+		t.Errorf("expected color_code omitted (NULL) when no code; got %q", got["color_code"])
 	}
 }
 
@@ -76,7 +78,7 @@ func TestGenerate_SystemProfilerError(t *testing.T) {
 	}
 	run := staticRunner(nil, errors.New("system_profiler failed"))
 
-	rows, err := generate(g, run)
+	rows, err := generate(g, func() string { return readModelName(run) })
 	if err != nil {
 		t.Fatalf("generate should swallow runner errors; got: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestGenerate_MacStudioForcedSilver(t *testing.T) {
 	studioJSON := `{"SPHardwareDataType":[{"machine_name":"Mac Studio"}]}`
 	run := staticRunner([]byte(studioJSON), nil)
 
-	rows, _ := generate(g, run)
+	rows, _ := generate(g, func() string { return readModelName(run) })
 	if rows[0]["color"] != "Silver" {
 		t.Errorf("Mac Studio should force Silver regardless of code; got %q", rows[0]["color"])
 	}

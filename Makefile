@@ -1,6 +1,6 @@
 .PHONY: all build test clean
 
-EXTENSIONS := mac_enclosure_color touchid
+EXTENSIONS := mac_enclosure_color
 
 all: build
 

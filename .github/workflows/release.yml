@@ -53,38 +53,3 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$RELEASE_TAG" mac_enclosure_color.ext --clobber
-
-  # touchid is Apple Silicon only (it relies on macOS biometrics / Secure
-  # Enclave tooling), so it ships an arm64-only binary.
-  touchid:
-    name: build touchid
-    runs-on: macos-latest
-    permissions:
-      contents: write # required to upload release assets
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: touchid/go.mod
-          cache-dependency-path: touchid/go.sum
-
-      - name: Build (arm64)
-        working-directory: touchid
-        env:
-          CGO_ENABLED: "1"
-          GOOS: darwin
-          GOARCH: arm64
-        run: |
-          go build -trimpath -ldflags='-s -w' -o ../touchid.ext .
-          file ../touchid.ext
-
-      - name: Upload to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          gh release upload "$RELEASE_TAG" touchid.ext --clobber

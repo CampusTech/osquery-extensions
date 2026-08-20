@@ -21,72 +21,19 @@ Data sources:
 
 The numeric `DeviceEnclosureColor` is mapped to a color name using the convention popularized by [munkireport's iBridge module](https://github.com/munkireport/ibridge) — the same numeric code maps to different colors on different Mac product lines, so model name disambiguation is required.
 
-### `touchid`
+### `touchid` — moved upstream
 
-Exposes two macOS Touch ID tables. **Apple Silicon only.**
-
-```sql
-SELECT * FROM touchid_system_config;
--- touchid_compatible | secure_enclave | touchid_enabled | touchid_unlock | touchid_builtin | touchid_sensor_present
--- 1                  | Mac16,5        | 1               | 1              | 1               | 1
-
-SELECT * FROM touchid_user_config;            -- one row per local account
-SELECT * FROM touchid_user_config WHERE uid = 501;
--- uid | fingerprints_registered | touchid_unlock | touchid_applepay | effective_unlock | effective_applepay
--- 501 | 1                       | 1              | 1                | 1                | 1
-```
-
-> [!WARNING]
-> **Do not use `touchid_compatible` or `touchid_enabled` to test whether a Mac has a Touch ID sensor.** Both are derived from `bioutil`'s `Biometrics functionality` flag, which reports the **Secure Enclave**, not a physical fingerprint sensor. The Secure Enclave is on-die on every Apple Silicon Mac, so **both columns are `1` on every Apple Silicon machine** — including a keyboard-less Mac mini or Mac Studio, and an iMac whose Touch ID keyboard is dead or disconnected. None of those can actually enroll or use Touch ID, yet they all report `touchid_compatible = 1` / `touchid_enabled = 1`.
->
-> To test for a usable sensor, use **`touchid_sensor_present`** (built-in **or** an attached Touch ID accessory) or **`touchid_builtin`** (built-in sensor only). See [the data sources](#data-sources) and the [connection-dependent caveat](#touchid_sensor_present-is-a-live-connection-dependent-signal) below.
-
-**uid selection.** With no `WHERE uid =`, the table returns a row for every real local account (uid 501–60000, enumerated via `dscl . -list /Users UniqueID`). Pass `WHERE uid =` to target a specific account.
-
-The two pieces of per-user data have **different access models**, which is why some columns can be empty:
-
-| Column(s) | Source | Needs root? | Needs the user logged in? |
-| --- | --- | --- | --- |
-| `fingerprints_registered` | `bioutil -c -s` (reads all users at once) | **Yes** | No |
-| `touchid_unlock`, `touchid_applepay`, `effective_*` | `bioutil -r` via `launchctl asuser <uid>` | No | **Yes** |
-
-`fleetd` / `orbit` runs extensions as **root**, so `bioutil -c -s` works there. When a column can't be read it is left **empty (unknown)** rather than `0`, so an enabled-but-logged-out user is never misreported as disabled:
-
-- Not running as root → `fingerprints_registered` is empty.
-- User not logged in → the four config flags are empty (the count is still reported).
-
-#### Data sources
-
-- `bioutil -r -s` — system-wide Touch ID configuration (compatibility, enabled, unlock).
-- `ioreg -r -c AppleBiometricSensor` — counts built-in Touch ID sensor nodes. Reported as `touchid_builtin` (`1` on laptops, `0` on keyboard-less Mac mini/Studio). **Why this matters:** `touchid_compatible` is `1` on _every_ Apple Silicon Mac because the Secure Enclave is on-die, so it cannot tell a Mac that actually has a fingerprint sensor from a keyboard-less desktop. `touchid_builtin` makes that distinction.
-- `ioreg -r -c AppleMesaAccessory` — detects an attached **external** Touch ID sensor (e.g. a Magic Keyboard with Touch ID), which enrolls fingerprints but exposes no `AppleBiometricSensor` node. "Mesa" is Apple's codename for the Touch ID sensor subsystem; the `AppleMesaAccessory` class is instantiated only when an external sensor is connected. `touchid_sensor_present` is `1` when **either** a built-in sensor **or** such an accessory is present — the correct signal for "this user can enroll a fingerprint." Use it to scope a Touch ID enrollment policy so sensor-less desktops are treated as not-applicable instead of failing. **This is a capability class, not a product-string match** — an old pre-Touch-ID Magic Keyboard registers no `AppleMesaAccessory` node and correctly reads as no sensor, independent of the device's marketing name, USB/Bluetooth transport, or localization. (The sibling classes `AppleMesaSEPDriver` / `AppleMesaResources` are *not* usable for this — they are SEP-side scaffolding present on every Apple Silicon Mac regardless of an attached sensor.)
-- `bioutil -r` (per-uid, via `launchctl asuser`) — user unlock / Apple Pay flags, including "effective" flags.
-- `bioutil -c -s` (root) — enrolled fingerprint template count for all users.
-- `system_profiler SPiBridgeDataType` — SoC model identifier reported as `secure_enclave` (every Apple Silicon Mac has an on-die Secure Enclave).
-
-`bioutil` output is parsed by line **label** rather than field position, so the tables stay correct on newer macOS releases that add configuration lines. When a user's count is known to be zero, the `effective_*` flags are forced to `0` to work around a `bioutil` quirk that can otherwise report them as enabled.
-
-#### `touchid_sensor_present` is a live, connection-dependent signal
-
-`touchid_builtin` is static per machine (a laptop's sensor is always there). But the accessory half of `touchid_sensor_present` reflects whether a Touch ID input device is **connected at scan time**, not whether the Mac was ever paired with one. A Magic Keyboard with Touch ID that is asleep, powered off, out of battery, or unpaired tears down its `AppleMesaAccessory` node, so `touchid_sensor_present` reads `0` for as long as it is disconnected. It flips back to `1` once the keyboard reconnects.
-
-This is intentional and **fail-safe**: a disconnected sensor means the user genuinely cannot use Touch ID right now, so a Touch ID enrollment policy scoped on `touchid_sensor_present` should treat that host as not-applicable rather than failing it. The trade-off is that an accessory-only desktop (iMac / Mac Studio / Mac mini relying on a wireless Touch ID keyboard) whose keyboard is chronically off will never be flagged for missing enrollment. Laptops and any desktop with a live Touch ID keyboard are unaffected.
-
-Verified across hardware:
-
-| Hardware | `touchid_builtin` | `touchid_sensor_present` |
-| --- | :---: | :---: |
-| MacBook (built-in sensor) | 1 | 1 |
-| Mac Studio / Mac mini, no Touch ID keyboard | 0 | 0 |
-| Mac Studio / iMac + connected Touch ID keyboard | 0 | 1 |
-| Mac Studio / iMac + asleep / dead / unpaired Touch ID keyboard | 0 | 0 |
-
-For comparison, `bioutil -r -s` reports `Biometrics functionality: 1` (and thus `touchid_compatible = 1`) on **every** row above — including the keyboard-less mini and the iMac with a dead keyboard — which is why `touchid_compatible` cannot be used to gate an enrollment policy.
+The `touchid_system_config` and `touchid_user_config` tables now live in
+[macadmins/osquery-extension](https://github.com/macadmins/osquery-extension)
+as of [v1.5.1](https://github.com/macadmins/osquery-extension/releases/tag/v1.5.1)
+(see [PR #110](https://github.com/macadmins/osquery-extension/pull/110) and
+[PR #111](https://github.com/macadmins/osquery-extension/pull/111)). Use the
+upstream extension instead of this repo for Touch ID data.
 
 ### Build
 
 ```sh
-cd touchid   # or: cd mac_enclosure_color
+cd mac_enclosure_color
 GOOS=darwin go build -o "$(basename "$PWD").ext"
 ```
 
@@ -97,10 +44,6 @@ Or build everything with `make build` from the repo root.
 ```sh
 osqueryi --extension ./mac_enclosure_color.ext
 osquery> SELECT * FROM mac_enclosure_color;
-
-osqueryi --extension ./touchid/touchid.ext
-osquery> SELECT * FROM touchid_system_config;
-osquery> SELECT * FROM touchid_user_config WHERE uid = 501;
 ```
 
 Run the unit tests for all extensions with `make test`.

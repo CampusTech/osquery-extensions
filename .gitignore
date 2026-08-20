@@ -1,9 +1,8 @@
 # Built extension binaries
 *.ext
 *.ext.dSYM/
-# Extensionless build outputs (e.g. `go build -o touchid`)
+# Extensionless build outputs (e.g. `go build -o mac_enclosure_color`)
 /mac_enclosure_color/mac_enclosure_color
-/touchid/touchid
 
 # Go build artifacts
 /bin/

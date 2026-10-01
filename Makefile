@@ -1,6 +1,6 @@
 .PHONY: all build test clean
 
-EXTENSIONS := mac_enclosure_color
+EXTENSIONS := mac_enclosure_color dot1x
 
 all: build
 

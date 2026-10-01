@@ -21,6 +21,24 @@ Data sources:
 
 The numeric `DeviceEnclosureColor` is mapped to a color name using the convention popularized by [munkireport's iBridge module](https://github.com/munkireport/ibridge) — the same numeric code maps to different colors on different Mac product lines, so model name disambiguation is required.
 
+### `dot1x`
+
+Exposes a `dot1x` table with per-interface 802.1X / EAPOL supplicant state:
+EAP method (outer + inner), supplicant state, client status / failure codes,
+authenticator MAC, and mode.
+
+```sql
+SELECT interface, state_name, supplicant_state_name, eap_type_name FROM dot1x;
+-- en0 | Running | Authenticated | EAP-TLS
+```
+
+The table implementation lives upstream in
+[macadmins/osquery-extension PR #113](https://github.com/macadmins/osquery-extension/pull/113)
+(`tables/dot1x`); `go.mod` pins it to that PR's branch via a `replace`. This
+wrapper registers **only** `dot1x`, because fleetd already bundles the other
+macadmins tables and loading the full macadmins extension would collide with
+them. Delete this extension once a fleetd release ships `dot1x` itself.
+
 ### `touchid` — moved upstream
 
 The `touchid_system_config` and `touchid_user_config` tables now live in

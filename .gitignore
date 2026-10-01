@@ -3,6 +3,7 @@
 *.ext.dSYM/
 # Extensionless build outputs (e.g. `go build -o mac_enclosure_color`)
 /mac_enclosure_color/mac_enclosure_color
+/dot1x/dot1x
 
 # Go build artifacts
 /bin/

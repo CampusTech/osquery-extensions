@@ -53,3 +53,52 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$RELEASE_TAG" mac_enclosure_color.ext --clobber
+
+  # dot1x ships a universal (arm64 + amd64) binary.
+  dot1x:
+    name: build dot1x
+    runs-on: macos-latest
+    permissions:
+      contents: write # required to upload release assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: dot1x/go.mod
+          cache-dependency-path: dot1x/go.sum
+
+      - name: Build (arm64)
+        working-directory: dot1x
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          go build -trimpath -ldflags='-s -w' -o ../dot1x.arm64.ext .
+
+      - name: Build (amd64)
+        working-directory: dot1x
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: amd64
+        run: |
+          go build -trimpath -ldflags='-s -w' -o ../dot1x.amd64.ext .
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output dot1x.ext \
+            dot1x.arm64.ext \
+            dot1x.amd64.ext
+          file dot1x.ext
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" dot1x.ext --clobber

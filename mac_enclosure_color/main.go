@@ -10,7 +10,7 @@
 //
 // Build:
 //
-//	GOOS=darwin go build -o mac_enclosure_color.ext
+//	GOOS=darwin go build -ldflags "-X main.version=0.4.1" -o mac_enclosure_color.ext
 //
 // Run standalone (for testing):
 //
@@ -21,39 +21,15 @@
 package main
 
 import (
-	"flag"
-	"log"
-	"time"
-
-	osquery "github.com/osquery/osquery-go"
+	"github.com/CampusTech/osquery-extensions/extserver"
 	"github.com/osquery/osquery-go/plugin/table"
 )
 
+// version is reported in osquery_extensions.version. Release builds set it
+// with -ldflags "-X main.version=<tag without v>".
+var version = "dev"
+
 func main() {
-	socket := flag.String("socket", "", "Path to the osquery extension socket")
-	timeout := flag.Int("timeout", 3, "Seconds to wait for a successful connection")
-	interval := flag.Int("interval", 3, "Seconds between connection checks")
-	verbose := flag.Bool("verbose", false, "Enable verbose extension logging")
-	flag.Parse()
-	_ = *verbose
-
-	if *socket == "" {
-		log.Fatalln("--socket is required")
-	}
-
-	server, err := osquery.NewExtensionManagerServer(
-		"mac_enclosure_color",
-		*socket,
-		osquery.ServerTimeout(time.Duration(*timeout)*time.Second),
-		osquery.ServerPingInterval(time.Duration(*interval)*time.Second),
-	)
-	if err != nil {
-		log.Fatalf("error creating extension manager: %s", err)
-	}
-
-	server.RegisterPlugin(table.NewPlugin("mac_enclosure_color", columns(), osqueryGenerate))
-
-	if err := server.Run(); err != nil {
-		log.Fatalln(err)
-	}
+	extserver.Main("mac_enclosure_color", version,
+		table.NewPlugin("mac_enclosure_color", columns(), osqueryGenerate))
 }

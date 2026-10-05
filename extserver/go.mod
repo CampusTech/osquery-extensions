@@ -1,11 +1,10 @@
-module github.com/CampusTech/osquery-extensions/mac_enclosure_color
+module github.com/CampusTech/osquery-extensions/extserver
 
 go 1.26.2
 
 require github.com/osquery/osquery-go v0.0.0-20260630173615-eb39ad3443df
 
 require (
-	github.com/CampusTech/osquery-extensions/extserver v0.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/apache/thrift v0.24.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
@@ -16,5 +15,3 @@ require (
 	go.opentelemetry.io/otel/trace v1.16.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
 )
-
-replace github.com/CampusTech/osquery-extensions/extserver => ../extserver

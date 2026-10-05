@@ -1,0 +1,26 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: extserver/go.mod
+          cache-dependency-path: "*/go.sum"
+      - name: vet and test
+        run: |
+          for m in extserver dot1x mac_enclosure_color; do
+            (cd "$m" && go vet ./... && go test -race ./...)
+          done

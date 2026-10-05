@@ -13,7 +13,7 @@
 //
 // Build:
 //
-//	GOOS=darwin go build -o dot1x.ext
+//	GOOS=darwin go build -ldflags "-X main.version=0.4.1" -o dot1x.ext
 //
 // Run standalone (for testing):
 //
@@ -21,60 +21,17 @@
 package main
 
 import (
-	"context"
-	"flag"
-	"log"
-	"time"
-
+	"github.com/CampusTech/osquery-extensions/extserver"
 	"github.com/macadmins/osquery-extension/tables/dot1x"
-	osquery "github.com/osquery/osquery-go"
 	"github.com/osquery/osquery-go/plugin/table"
 )
 
+// version is reported in osquery_extensions.version; the Fleet install
+// policy gates on it. Release builds set it with
+// -ldflags "-X main.version=<tag without v>".
+var version = "dev"
+
 func main() {
-	socket := flag.String("socket", "", "Path to the osquery extension socket")
-	timeout := flag.Int("timeout", 3, "Seconds to wait for a successful connection")
-	interval := flag.Int("interval", 3, "Seconds between connection checks")
-	verbose := flag.Bool("verbose", false, "Enable verbose extension logging")
-	flag.Parse()
-	_ = *verbose
-
-	if *socket == "" {
-		log.Fatalln("--socket is required")
-	}
-
-	client, err := osquery.NewClient(*socket, time.Duration(*timeout)*time.Second)
-	if err != nil {
-		log.Fatalf("error creating extension manager client: %s", err)
-	}
-	defer client.Close()
-
-	server, err := newServer(*socket, client, time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second)
-	if err != nil {
-		log.Fatalf("error creating extension manager: %s", err)
-	}
-
-	if err := run(context.Background(), server, client, time.Duration(*interval)*time.Second); err != nil {
-		log.Fatalln(err)
-	}
-}
-
-func newServer(socket string, client osquery.ExtensionManager, timeout, interval time.Duration) (*osquery.ExtensionManagerServer, error) {
-	server, err := osquery.NewExtensionManagerServer(
-		"dot1x",
-		socket,
-		osquery.WithClient(client),
-		osquery.ServerTimeout(timeout),
-		osquery.ServerPingInterval(interval),
-	)
-	if err != nil {
-		return nil, err
-	}
-	server.RegisterPlugin(table.NewPlugin("dot1x", dot1x.Dot1XStatusColumns(), dot1x.Dot1XStatusGenerate))
-	return server, nil
-}
-
-// run serves the extension until ctx is cancelled or osquery goes away.
-func run(_ context.Context, server *osquery.ExtensionManagerServer, _ osquery.ExtensionManager, _ time.Duration) error {
-	return server.Run()
+	extserver.Main("dot1x", version,
+		table.NewPlugin("dot1x", dot1x.Dot1XStatusColumns(), dot1x.Dot1XStatusGenerate))
 }

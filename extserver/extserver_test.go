@@ -1,4 +1,4 @@
-package main
+package extserver
 
 import (
 	"context"
@@ -12,9 +12,13 @@ import (
 
 	osquery "github.com/osquery/osquery-go"
 	gen "github.com/osquery/osquery-go/gen/osquery"
+	"github.com/osquery/osquery-go/plugin/table"
 )
 
-const testInterval = 10 * time.Millisecond
+const (
+	testInterval = 10 * time.Millisecond
+	testVersion  = "1.2.3"
+)
 
 // fakeOsquery stands in for osqueryd's extension manager. ping and register
 // are given the 1-based call number so a test can script a sequence of
@@ -56,7 +60,7 @@ func registered(n int) *gen.ExtensionStatus {
 	return &gen.ExtensionStatus{Code: 0, Message: "OK", UUID: gen.ExtensionRouteUUID(n)}
 }
 
-// duplicate is what osqueryd answers while a stale registration named dot1x
+// duplicate is what osqueryd answers while a stale registration with our name
 // is still in its registry (osquery/extensions/interface.cpp).
 func duplicate(int) *gen.ExtensionStatus {
 	return &gen.ExtensionStatus{Code: 1, Message: "Duplicate extension registered"}
@@ -70,13 +74,15 @@ func startRun(t *testing.T, f *fakeOsquery) (context.CancelFunc, <-chan error) {
 	t.Helper()
 	// The server listens on <socket>.<uuid>; keep the path short enough for
 	// a unix socket (macOS t.TempDir() paths are too long).
-	dir, err := os.MkdirTemp("/tmp", "dot1x")
+	dir, err := os.MkdirTemp("/tmp", "extserver")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	server, err := newServer(filepath.Join(dir, "em"), f, time.Second, testInterval)
+	plugin := table.NewPlugin("t", []table.ColumnDefinition{table.TextColumn("c")},
+		func(context.Context, table.QueryContext) ([]map[string]string, error) { return nil, nil })
+	server, err := newServer("test", testVersion, filepath.Join(dir, "em"), f, time.Second, plugin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +122,7 @@ func stop(t *testing.T, cancel context.CancelFunc, done <-chan error) error {
 
 // Host 671, 2026-10-05: a single failed ping ("timeout after 200ms") made
 // dot1x.ext exit, leaving a registration osqueryd never reaped. One blip must
-// not kill the extension.
+// not kill the extension, and shutting down must deregister.
 func TestTransientPingFailureDoesNotExit(t *testing.T) {
 	f := &fakeOsquery{
 		ping: func(n int) error {
@@ -199,7 +205,7 @@ func TestRegistersVersion(t *testing.T) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.version == "" {
-		t.Error("registered with an empty version")
+	if f.version != testVersion {
+		t.Errorf("registered version %q, want %q", f.version, testVersion)
 	}
 }

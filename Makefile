@@ -11,7 +11,7 @@ build:
 	done
 
 test:
-	@for ext in $(EXTENSIONS); do \
+	@for ext in extserver $(EXTENSIONS); do \
 		cd $$ext && go test ./... && cd ..; \
 	done
 

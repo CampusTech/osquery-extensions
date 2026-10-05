@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/CampusTech/osquery-extensions/extserver v0.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/apache/thrift v0.24.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -23,3 +24,5 @@ require (
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )
+
+replace github.com/CampusTech/osquery-extensions/extserver => ../extserver

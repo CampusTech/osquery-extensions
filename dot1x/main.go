@@ -21,6 +21,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"time"
@@ -42,19 +43,38 @@ func main() {
 		log.Fatalln("--socket is required")
 	}
 
-	server, err := osquery.NewExtensionManagerServer(
-		"dot1x",
-		*socket,
-		osquery.ServerTimeout(time.Duration(*timeout)*time.Second),
-		osquery.ServerPingInterval(time.Duration(*interval)*time.Second),
-	)
+	client, err := osquery.NewClient(*socket, time.Duration(*timeout)*time.Second)
+	if err != nil {
+		log.Fatalf("error creating extension manager client: %s", err)
+	}
+	defer client.Close()
+
+	server, err := newServer(*socket, client, time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second)
 	if err != nil {
 		log.Fatalf("error creating extension manager: %s", err)
 	}
 
-	server.RegisterPlugin(table.NewPlugin("dot1x", dot1x.Dot1XStatusColumns(), dot1x.Dot1XStatusGenerate))
-
-	if err := server.Run(); err != nil {
+	if err := run(context.Background(), server, client, time.Duration(*interval)*time.Second); err != nil {
 		log.Fatalln(err)
 	}
+}
+
+func newServer(socket string, client osquery.ExtensionManager, timeout, interval time.Duration) (*osquery.ExtensionManagerServer, error) {
+	server, err := osquery.NewExtensionManagerServer(
+		"dot1x",
+		socket,
+		osquery.WithClient(client),
+		osquery.ServerTimeout(timeout),
+		osquery.ServerPingInterval(interval),
+	)
+	if err != nil {
+		return nil, err
+	}
+	server.RegisterPlugin(table.NewPlugin("dot1x", dot1x.Dot1XStatusColumns(), dot1x.Dot1XStatusGenerate))
+	return server, nil
+}
+
+// run serves the extension until ctx is cancelled or osquery goes away.
+func run(_ context.Context, server *osquery.ExtensionManagerServer, _ osquery.ExtensionManager, _ time.Duration) error {
+	return server.Run()
 }

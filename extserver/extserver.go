@@ -19,16 +19,19 @@ package extserver
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	osquery "github.com/osquery/osquery-go"
+	gen "github.com/osquery/osquery-go/gen/osquery"
 )
 
 const (
@@ -62,14 +65,14 @@ func Main(name, version string, plugins ...osquery.OsqueryPlugin) {
 		log.Fatalf("error creating extension manager client: %s", err)
 	}
 
-	server, err := newServer(name, version, *socket, client, timeout, plugins...)
+	server, gated, err := newServer(name, version, *socket, client, timeout, plugins...)
 	if err != nil {
 		client.Close()
 		log.Fatalf("error creating extension manager: %s", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err = run(ctx, server, client, interval)
+	err = run(ctx, server, gated, interval)
 	stop()
 	client.Close()
 	if err != nil {
@@ -77,27 +80,54 @@ func Main(name, version string, plugins ...osquery.OsqueryPlugin) {
 	}
 }
 
-func newServer(name, version, socket string, client osquery.ExtensionManager, timeout time.Duration, plugins ...osquery.OsqueryPlugin) (*osquery.ExtensionManagerServer, error) {
+// gate refuses registrations once shut, so none can begin after run starts
+// shutting down. osquery-go only guards this for clients it creates itself.
+type gate struct {
+	osquery.ExtensionManager
+	mu   sync.Mutex
+	shut bool
+}
+
+func (g *gate) RegisterExtension(info *gen.InternalExtensionInfo, registry gen.ExtensionRegistry) (*gen.ExtensionStatus, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.shut {
+		return nil, errors.New("shutting down")
+	}
+	return g.ExtensionManager.RegisterExtension(info, registry)
+}
+
+// close waits out an in-flight registration (so Shutdown deregisters it) and
+// refuses any later one.
+func (g *gate) close() {
+	g.mu.Lock()
+	g.shut = true
+	g.mu.Unlock()
+}
+
+func newServer(name, version, socket string, client osquery.ExtensionManager, timeout time.Duration, plugins ...osquery.OsqueryPlugin) (*osquery.ExtensionManagerServer, *gate, error) {
+	g := &gate{ExtensionManager: client}
 	server, err := osquery.NewExtensionManagerServer(
 		name,
 		socket,
-		osquery.WithClient(client),
+		osquery.WithClient(g),
 		osquery.ServerTimeout(timeout),
 		osquery.ExtensionVersion(version),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	server.RegisterPlugin(plugins...)
-	return server, nil
+	return server, g, nil
 }
 
 // run registers the extension and serves until ctx is cancelled, osquery asks
 // it to shut down, or maxPingFailures consecutive pings fail.
-func run(ctx context.Context, server *osquery.ExtensionManagerServer, client osquery.ExtensionManager, interval time.Duration) error {
+func run(ctx context.Context, server *osquery.ExtensionManagerServer, client *gate, interval time.Duration) error {
 	// Always deregister on the way out so osqueryd never has to reap a stale
 	// registration itself.
 	defer func() {
+		client.close()
 		if err := server.Shutdown(context.Background()); err != nil {
 			log.Println(err)
 		}
@@ -139,9 +169,6 @@ func run(ctx context.Context, server *osquery.ExtensionManagerServer, client osq
 // with our name it refuses us as a duplicate; its extension watcher normally
 // reaps the stale entry within a couple of --extensions_interval periods, so
 // retry in-process with backoff instead of exiting into a respawn loop.
-//
-// ponytail: a retry that races run's shutdown can register just before the
-// process exits; osqueryd then reaps it like any dead extension.
 func start(ctx context.Context, server *osquery.ExtensionManagerServer, backoff time.Duration) error {
 	for {
 		err := server.Start()

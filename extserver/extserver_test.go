@@ -33,6 +33,7 @@ type fakeOsquery struct {
 
 	mu      sync.Mutex
 	version string
+	live    map[gen.ExtensionRouteUUID]bool // registered, not yet deregistered
 }
 
 func (f *fakeOsquery) Close() {}
@@ -45,15 +46,31 @@ func (f *fakeOsquery) Ping() (*gen.ExtensionStatus, error) {
 }
 
 func (f *fakeOsquery) RegisterExtension(info *gen.InternalExtensionInfo, _ gen.ExtensionRegistry) (*gen.ExtensionStatus, error) {
+	status := f.register(int(f.registers.Add(1)))
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.version = info.Version
-	f.mu.Unlock()
-	return f.register(int(f.registers.Add(1))), nil
+	if status.Code == 0 {
+		if f.live == nil {
+			f.live = map[gen.ExtensionRouteUUID]bool{}
+		}
+		f.live[status.UUID] = true
+	}
+	return status, nil
 }
 
-func (f *fakeOsquery) DeregisterExtension(gen.ExtensionRouteUUID) (*gen.ExtensionStatus, error) {
+func (f *fakeOsquery) DeregisterExtension(uuid gen.ExtensionRouteUUID) (*gen.ExtensionStatus, error) {
 	f.deregisters.Add(1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.live, uuid)
 	return &gen.ExtensionStatus{Code: 0, Message: "OK"}, nil
+}
+
+func (f *fakeOsquery) leaked() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.live)
 }
 
 func registered(n int) *gen.ExtensionStatus {
@@ -72,6 +89,12 @@ func healthy(int) error { return nil }
 // cancel func plus the channel run's result arrives on.
 func startRun(t *testing.T, f *fakeOsquery) (context.CancelFunc, <-chan error) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	return cancel, startRunCtx(t, f, ctx)
+}
+
+func startRunCtx(t *testing.T, f *fakeOsquery, ctx context.Context) <-chan error {
+	t.Helper()
 	// The server listens on <socket>.<uuid>; keep the path short enough for
 	// a unix socket (macOS t.TempDir() paths are too long).
 	dir, err := os.MkdirTemp("/tmp", "extserver")
@@ -82,15 +105,15 @@ func startRun(t *testing.T, f *fakeOsquery) (context.CancelFunc, <-chan error) {
 
 	plugin := table.NewPlugin("t", []table.ColumnDefinition{table.TextColumn("c")},
 		func(context.Context, table.QueryContext) ([]map[string]string, error) { return nil, nil })
-	server, err := newServer("test", testVersion, filepath.Join(dir, "em"), f, time.Second, plugin)
+	server, client, err := newServer("test", testVersion, filepath.Join(dir, "em"), f, time.Second, plugin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, server, f, testInterval) }()
-	return cancel, done
+	go func() { done <- run(ctx, server, client, testInterval) }()
+	return done
 }
 
 // waitFor polls cond until it holds, failing the test if run exits first.
@@ -207,5 +230,22 @@ func TestRegistersVersion(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.version != testVersion {
 		t.Errorf("registered version %q, want %q", f.version, testVersion)
+	}
+}
+
+// A registration must never complete after run has shut down: nothing would
+// ever deregister it, recreating the stale entry this package exists to avoid.
+func TestNoRegistrationAfterShutdown(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		f := &fakeOsquery{ping: healthy, register: registered}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // shut down immediately, racing the first registration
+		if err := <-startRunCtx(t, f, ctx); err != nil {
+			t.Fatalf("run returned %v, want nil", err)
+		}
+		time.Sleep(time.Millisecond) // let a straggling registration land
+		if n := f.leaked(); n != 0 {
+			t.Fatalf("iteration %d: %d registration(s) left behind after shutdown", i, n)
+		}
 	}
 }
